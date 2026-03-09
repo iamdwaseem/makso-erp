@@ -7,7 +7,13 @@ const inventoryService = new InventoryService();
 export class InventoryController {
   async getAllInventory(req: Request, res: Response) {
     try {
-      const inventory = await inventoryService.getAllInventory();
+      const limit  = Math.min(parseInt(String(req.query.limit  ?? 500)), 1000);
+      const offset = parseInt(String(req.query.offset ?? 0));
+      const [inventory, total] = await Promise.all([
+        inventoryService.getAllInventory({ limit, offset }),
+        inventoryService.countInventory(),
+      ]);
+      res.setHeader("X-Total-Count", total);
       return res.status(200).json(inventory);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });

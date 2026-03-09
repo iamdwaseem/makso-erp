@@ -1,4 +1,4 @@
-import { PrismaClient, Sale, SaleItem } from "@prisma/client";
+import { PrismaClient, Sale } from "@prisma/client";
 import { SaleInput } from "../validators/sale.validator.js";
 import { InventoryRepository } from "./inventory.repository.js";
 import crypto from "crypto";
@@ -13,39 +13,47 @@ function generateInvoiceNumber(prefix: string): string {
 const inventoryRepository = new InventoryRepository();
 
 export class SaleRepository {
-  async findAll() {
-    const sales = await prisma.sale.findMany({
-      include: {
-        customer: true,
-        items: { include: { variant: { include: { product: true } } } },
-      },
-      orderBy: { created_at: "desc" },
-    });
+  /**
+   * Eliminated N+1: previously did one purchaseItem query per sale item.
+   * Now does 2 queries total + one O(n) map build.
+   */
+  async findAll({ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
+    const [sales, allPurchaseItems] = await Promise.all([
+      prisma.sale.findMany({
+        include: {
+          customer: true,
+          items: { include: { variant: { include: { product: true } } } },
+        },
+        orderBy: { created_at: "desc" },
+        skip: offset,
+        take: limit,
+      }),
+      // Fetch all purchaseItems once to resolve supplier per variant
+      prisma.purchaseItem.findMany({
+        include: { purchase: { include: { supplier: true } } },
+        orderBy: { purchase: { created_at: "desc" } },
+      }),
+    ]);
 
-    // For each sale item, find the most recent supplier of that variant
-    const enriched = await Promise.all(
-      sales.map(async (sale) => {
-        const itemsWithSuppliers = await Promise.all(
-          sale.items.map(async (item) => {
-            const lastPurchaseItem = await prisma.purchaseItem.findFirst({
-              where: { variant_id: item.variant_id },
-              orderBy: { purchase: { created_at: "desc" } },
-              include: { purchase: { include: { supplier: true } } },
-            });
-            return {
-              ...item,
-              supplier: lastPurchaseItem?.purchase?.supplier || null,
-            };
-          })
-        );
-        return {
-          ...sale,
-          items: itemsWithSuppliers,
-        };
-      })
-    );
+    // variant_id → latest supplier (first occurrence = most recent)
+    const supplierByVariant = new Map<string, any>();
+    for (const item of allPurchaseItems) {
+      if (!supplierByVariant.has(item.variant_id)) {
+        supplierByVariant.set(item.variant_id, item.purchase?.supplier ?? null);
+      }
+    }
 
-    return enriched;
+    return sales.map(sale => ({
+      ...sale,
+      items: sale.items.map(item => ({
+        ...item,
+        supplier: supplierByVariant.get(item.variant_id) ?? null,
+      })),
+    }));
+  }
+
+  async count(): Promise<number> {
+    return prisma.sale.count();
   }
 
   async findById(id: string): Promise<any | null> {
@@ -56,32 +64,33 @@ export class SaleRepository {
         items: { include: { variant: { include: { product: true } } } },
       },
     });
-
     if (!sale) return null;
 
-    const itemsWithSuppliers = await Promise.all(
-      sale.items.map(async (item) => {
-        const lastPurchaseItem = await prisma.purchaseItem.findFirst({
-          where: { variant_id: item.variant_id },
-          orderBy: { purchase: { created_at: "desc" } },
-          include: { purchase: { include: { supplier: true } } },
-        });
-        return {
-          ...item,
-          supplier: lastPurchaseItem?.purchase?.supplier || null,
-        };
-      })
-    );
+    // For single-item view, the extra query is negligible
+    const allPurchaseItems = await prisma.purchaseItem.findMany({
+      where: { variant_id: { in: sale.items.map(i => i.variant_id) } },
+      include: { purchase: { include: { supplier: true } } },
+      orderBy: { purchase: { created_at: "desc" } },
+    });
+
+    const supplierByVariant = new Map<string, any>();
+    for (const item of allPurchaseItems) {
+      if (!supplierByVariant.has(item.variant_id)) {
+        supplierByVariant.set(item.variant_id, item.purchase?.supplier ?? null);
+      }
+    }
 
     return {
       ...sale,
-      items: itemsWithSuppliers,
+      items: sale.items.map(item => ({
+        ...item,
+        supplier: supplierByVariant.get(item.variant_id) ?? null,
+      })),
     };
   }
 
   async createSale(data: SaleInput): Promise<Sale> {
     return prisma.$transaction(async (tx) => {
-      // 1. Create sale record
       const sale = await tx.sale.create({
         data: {
           customer_id: data.customer_id,
@@ -89,30 +98,16 @@ export class SaleRepository {
         },
       });
 
-      // 2. Create sale_items
       for (const item of data.items) {
         await tx.saleItem.create({
-          data: {
-            sale_id: sale.id,
-            variant_id: item.variant_id,
-            quantity: item.quantity,
-          },
+          data: { sale_id: sale.id, variant_id: item.variant_id, quantity: item.quantity },
         });
-
-        // 3 & 4. Decrease inventory & insert ledger entries (using the existing engine logic synced via tx)
         await inventoryRepository.adjustInventory(
-          {
-            variant_id: item.variant_id,
-            action: "OUT",
-            quantity: item.quantity,
-            reference_type: "SALE",
-            reference_id: sale.id,
-          },
-          tx
+          { variant_id: item.variant_id, action: "OUT", quantity: item.quantity, reference_type: "SALE", reference_id: sale.id },
+          tx,
         );
       }
 
-      // Return fully loaded sale
       return tx.sale.findUnique({
         where: { id: sale.id },
         include: {

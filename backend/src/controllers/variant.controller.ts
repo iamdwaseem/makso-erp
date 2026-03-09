@@ -81,8 +81,9 @@ export class VariantController {
       await variantService.deleteVariant(id);
       return res.status(204).send();
     } catch (error: any) {
-      const status = error.message === "Variant not found" ? 404 : 500;
-      return res.status(status).json({ error: error.message });
+      if (error.message === "Variant not found") return res.status(404).json({ error: error.message });
+      if (error.message?.startsWith("Cannot delete")) return res.status(400).json({ error: error.message });
+      return res.status(500).json({ error: error.message });
     }
   }
 }

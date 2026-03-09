@@ -45,6 +45,7 @@ model Product {
   sku         String    @unique
   description String?
   created_at  DateTime  @default(now())
+  deleted_at  DateTime? // soft delete — never truly remove for audit trail
   variants    Variant[]
 
   @@map("products")
@@ -56,6 +57,7 @@ model Variant {
   color      String
   sku        String            @unique
   created_at DateTime          @default(now())
+  deleted_at DateTime? // soft delete
 
   product        Product           @relation(fields: [product_id], references: [id], onDelete: Cascade)
   inventory      Inventory?
@@ -94,6 +96,8 @@ model InventoryLedger {
 
   variant        Variant      @relation(fields: [variant_id], references: [id], onDelete: Cascade)
 
+  @@index([variant_id])
+  @@index([created_at])
   @@map("inventory_ledger")
 }
 
@@ -107,6 +111,8 @@ model Purchase {
   supplier       Supplier       @relation(fields: [supplier_id], references: [id], onDelete: Restrict)
   items          PurchaseItem[]
 
+  @@index([supplier_id])
+  @@index([purchase_date])
   @@map("purchases")
 }
 
@@ -119,6 +125,8 @@ model PurchaseItem {
   purchase    Purchase @relation(fields: [purchase_id], references: [id], onDelete: Cascade)
   variant     Variant  @relation(fields: [variant_id], references: [id], onDelete: Restrict)
 
+  @@index([variant_id])
+  @@index([purchase_id])
   @@map("purchase_items")
 }
 
@@ -132,6 +140,8 @@ model Sale {
   customer       Customer   @relation(fields: [customer_id], references: [id], onDelete: Restrict)
   items          SaleItem[]
 
+  @@index([customer_id])
+  @@index([sale_date])
   @@map("sales")
 }
 
@@ -144,6 +154,8 @@ model SaleItem {
   sale        Sale     @relation(fields: [sale_id], references: [id], onDelete: Cascade)
   variant     Variant  @relation(fields: [variant_id], references: [id], onDelete: Restrict)
 
+  @@index([variant_id])
+  @@index([sale_id])
   @@map("sale_items")
 }
 
@@ -157,7 +169,18 @@ model ScanLog {
 
   variant    Variant      @relation(fields: [variant_id], references: [id], onDelete: Cascade)
 
+  @@index([variant_id])
+  @@index([created_at])
   @@map("scan_logs")
 }
 
+model User {
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String
+  email      String   @unique
+  password   String
+  created_at DateTime @default(now())
+
+  @@map("users")
+}
 

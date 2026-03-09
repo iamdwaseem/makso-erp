@@ -7,7 +7,13 @@ const saleService = new SaleService();
 export class SaleController {
   async getAllSales(req: Request, res: Response) {
     try {
-      const sales = await saleService.getAllSales();
+      const limit  = Math.min(parseInt(String(req.query.limit  ?? 100)), 500);
+      const offset = parseInt(String(req.query.offset ?? 0));
+      const [sales, total] = await Promise.all([
+        saleService.getAllSales({ limit, offset }),
+        saleService.countSales(),
+      ]);
+      res.setHeader("X-Total-Count", total);
       return res.status(200).json(sales);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });

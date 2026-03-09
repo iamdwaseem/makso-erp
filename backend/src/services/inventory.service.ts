@@ -6,8 +6,12 @@ const inventoryRepository = new InventoryRepository();
 const variantRepository = new VariantRepository();
 
 export class InventoryService {
-  async getAllInventory() {
-    return inventoryRepository.findAll();
+  async getAllInventory(opts?: { limit?: number; offset?: number }) {
+    return inventoryRepository.findAll(opts);
+  }
+
+  async countInventory() {
+    return inventoryRepository.count();
   }
 
   async getInventoryByVariantId(variantId: string) {

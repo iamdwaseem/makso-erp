@@ -4,27 +4,36 @@ import { AdjustInventoryInput } from "../validators/inventory.validator.js";
 const prisma = new PrismaClient();
 
 export class InventoryRepository {
-  async findAll() {
-    const records = await prisma.inventory.findMany({
-      include: { variant: { include: { product: true } } },
-    });
+  /**
+   * Eliminated N+1: was doing one purchaseItem query per inventory row.
+   * Now: 2 queries total — fetch all inventory, fetch all purchaseItems ordered
+   * by date desc, then pick the first (= latest) per variant client-side.
+   */
+  async findAll({ limit = 500, offset = 0 }: { limit?: number; offset?: number } = {}) {
+    const [records, allPurchaseItems] = await Promise.all([
+      prisma.inventory.findMany({
+        include: { variant: { include: { product: true } } },
+        skip: offset,
+        take: limit,
+      }),
+      prisma.purchaseItem.findMany({
+        include: { purchase: { include: { supplier: true } } },
+        orderBy: { purchase: { created_at: "desc" } },
+      }),
+    ]);
 
-    // For each variant, fetch the most recent purchase to get supplier info
-    const enriched = await Promise.all(
-      records.map(async (inv) => {
-        const lastPurchaseItem = await prisma.purchaseItem.findFirst({
-          where: { variant_id: inv.variant_id },
-          orderBy: { purchase: { created_at: "desc" } },
-          include: { purchase: { include: { supplier: true } } },
-        });
-        return {
-          ...inv,
-          supplier: lastPurchaseItem?.purchase?.supplier || null,
-        };
-      })
-    );
+    // Build variant_id → latest supplier map in a single O(n) pass
+    const supplierByVariant = new Map<string, any>();
+    for (const item of allPurchaseItems) {
+      if (!supplierByVariant.has(item.variant_id)) {
+        supplierByVariant.set(item.variant_id, item.purchase?.supplier ?? null);
+      }
+    }
 
-    return enriched;
+    return records.map(inv => ({
+      ...inv,
+      supplier: supplierByVariant.get(inv.variant_id) ?? null,
+    }));
   }
 
   async findByVariantId(variantId: string): Promise<Inventory | null> {
@@ -34,40 +43,34 @@ export class InventoryRepository {
     });
   }
 
-  async adjustInventory(data: AdjustInventoryInput, txClient?: any): Promise<{ inventory: Inventory, ledger: InventoryLedger }> {
+  async adjustInventory(
+    data: AdjustInventoryInput,
+    txClient?: any,
+  ): Promise<{ inventory: Inventory; ledger: InventoryLedger }> {
     const execute = async (tx: any) => {
-      // Find existing inventory or create one with 0 quantity
       let inventory = await tx.inventory.findUnique({
         where: { variant_id: data.variant_id },
       });
 
       if (!inventory) {
         inventory = await tx.inventory.create({
-          data: {
-            variant_id: data.variant_id,
-            quantity: 0,
-          },
+          data: { variant_id: data.variant_id, quantity: 0 },
         });
       }
 
-      // Calculate new quantity length
       let newQuantity = inventory.quantity;
       if (data.action === "IN") {
         newQuantity += data.quantity;
       } else if (data.action === "OUT") {
         newQuantity -= data.quantity;
-        if (newQuantity < 0) {
-          throw new Error("Insufficient inventory");
-        }
+        if (newQuantity < 0) throw new Error("Insufficient inventory");
       }
 
-      // Update inventory
       const updatedInventory = await tx.inventory.update({
         where: { id: inventory.id },
         data: { quantity: newQuantity },
       });
 
-      // Create ledger record
       const ledgerRecord = await tx.inventoryLedger.create({
         data: {
           variant_id: data.variant_id,
@@ -89,5 +92,9 @@ export class InventoryRepository {
       where: { variant_id: variantId },
       orderBy: { created_at: "desc" },
     });
+  }
+
+  async count(): Promise<number> {
+    return prisma.inventory.count();
   }
 }

@@ -8,8 +8,12 @@ const customerRepository = new CustomerRepository();
 const variantRepository = new VariantRepository();
 
 export class SaleService {
-  async getAllSales() {
-    return saleRepository.findAll();
+  async getAllSales(opts?: { limit?: number; offset?: number }) {
+    return saleRepository.findAll(opts);
+  }
+
+  async countSales() {
+    return saleRepository.count();
   }
 
   async getSaleById(id: string) {

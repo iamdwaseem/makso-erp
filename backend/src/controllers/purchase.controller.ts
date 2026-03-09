@@ -7,7 +7,13 @@ const purchaseService = new PurchaseService();
 export class PurchaseController {
   async getAllPurchases(req: Request, res: Response) {
     try {
-      const purchases = await purchaseService.getAllPurchases();
+      const limit  = Math.min(parseInt(String(req.query.limit  ?? 100)), 500);
+      const offset = parseInt(String(req.query.offset ?? 0));
+      const [purchases, total] = await Promise.all([
+        purchaseService.getAllPurchases({ limit, offset }),
+        purchaseService.countPurchases(),
+      ]);
+      res.setHeader("X-Total-Count", total);
       return res.status(200).json(purchases);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });

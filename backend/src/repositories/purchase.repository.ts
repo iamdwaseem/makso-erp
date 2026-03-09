@@ -13,14 +13,20 @@ function generateInvoiceNumber(prefix: string): string {
 const inventoryRepository = new InventoryRepository();
 
 export class PurchaseRepository {
-  async findAll(): Promise<Purchase[]> {
+  async findAll({ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}): Promise<Purchase[]> {
     return prisma.purchase.findMany({
       include: {
         supplier: true,
         items: { include: { variant: { include: { product: true } } } },
       },
       orderBy: { created_at: "desc" },
+      skip: offset,
+      take: limit,
     });
+  }
+
+  async count(): Promise<number> {
+    return prisma.purchase.count();
   }
 
   async findById(id: string): Promise<Purchase | null> {

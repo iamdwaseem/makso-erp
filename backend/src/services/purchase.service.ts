@@ -8,8 +8,12 @@ const supplierRepository = new SupplierRepository();
 const variantRepository = new VariantRepository();
 
 export class PurchaseService {
-  async getAllPurchases() {
-    return purchaseRepository.findAll();
+  async getAllPurchases(opts?: { limit?: number; offset?: number }) {
+    return purchaseRepository.findAll(opts);
+  }
+
+  async countPurchases() {
+    return purchaseRepository.count();
   }
 
   async getPurchaseById(id: string) {

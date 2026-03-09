@@ -1,12 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import api from "../api";
 
 interface InventoryItem {
   id: string;
-  variant_id: string; // Added variant_id
+  variant_id: string;
   quantity: number;
   updated_at: string;
-  variant: { sku: string; color: string; product: { name: string } };
+  variant: { sku: string; color: string; product: { id: string; name: string } };
   supplier: { name: string; phone: string } | null;
 }
 
@@ -19,163 +20,458 @@ interface LedgerEntry {
   created_at: string;
 }
 
+type StatusFilter = "all" | "in_stock" | "low_stock" | "out_of_stock";
+type ViewMode = "grid" | "table";
+
+function statusOf(qty: number) {
+  if (qty === 0) return "out_of_stock";
+  if (qty < 10) return "low_stock";
+  return "in_stock";
+}
+
+const STATUS_LABELS = {
+  in_stock: { label: "In Stock", cls: "bg-emerald-100 text-emerald-700" },
+  low_stock: { label: "Low Stock", cls: "bg-amber-100 text-amber-700" },
+  out_of_stock: { label: "Out of Stock", cls: "bg-red-100 text-red-700" },
+};
+
+// Pastel colour chip for variant colours
+const COLOR_DOTS: Record<string, string> = {
+  black: "bg-gray-800", white: "bg-gray-100 border border-gray-300",
+  red: "bg-red-500", blue: "bg-blue-500", green: "bg-green-500",
+  grey: "bg-gray-400", gray: "bg-gray-400", silver: "bg-slate-300 border border-slate-400",
+  "midnight black": "bg-gray-900", "space grey": "bg-slate-400",
+  "matte black": "bg-gray-900", "ivory white": "bg-amber-50 border border-amber-200",
+  "midnight blue": "bg-indigo-700",
+};
+function colourDot(colour: string) {
+  const key = colour.toLowerCase();
+  const cls = COLOR_DOTS[key] ?? "bg-violet-400";
+  return <span className={`inline-block w-3 h-3 rounded-full shrink-0 ${cls}`} />;
+}
+
 export function Inventory() {
   const [items, setItems] = useState<InventoryItem[]>([]);
-  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
-  const [selectedVariant, setSelectedVariant] = useState<InventoryItem | null>(null);
+
+  // Filters
+  const [search, setSearch] = useState("");
+  const [productFilter, setProductFilter] = useState("all");
+  const [supplierFilter, setSupplierFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [view, setView] = useState<ViewMode>("grid");
+
+  // QR modal
+  const [qrSku, setQrSku] = useState<string | null>(null);
+
+  const printQr = (sku: string) => {
+    const svg = document.getElementById("inv-qr-print-area");
+    if (!svg) return;
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(`<html><head><title>QR - ${sku}</title>
+      <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:monospace;}p{font-size:18px;margin-top:12px;}</style></head>
+      <body>${svg.outerHTML}<p>${sku}</p><script>window.print();window.close();</script></body></html>`);
+  };
+
+  // Ledger modal
+  const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [ledgerLoading, setLedgerLoading] = useState(false);
 
   useEffect(() => {
     api.get("/inventory")
-      .then((res) => setItems(res.data))
+      .then(res => setItems(res.data))
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 
-  const filtered = items.filter((item) => {
+  // ── Unique filter options ─────────────────────────────────────────────────
+  const productOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    items.forEach(i => seen.set(i.variant.product.id, i.variant.product.name));
+    return Array.from(seen.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+  }, [items]);
+
+  const supplierOptions = useMemo(() => {
+    const names = [...new Set(items.map(i => i.supplier?.name).filter(Boolean) as string[])].sort();
+    return names;
+  }, [items]);
+
+  const anyFilterActive = search || productFilter !== "all" || supplierFilter !== "all" || statusFilter !== "all";
+
+  const resetFilters = () => {
+    setSearch(""); setProductFilter("all"); setSupplierFilter("all"); setStatusFilter("all");
+  };
+
+  // ── Filtered flat list ────────────────────────────────────────────────────
+  const filtered = useMemo(() => {
     const q = search.toLowerCase();
-    return (
-      item.variant?.product?.name?.toLowerCase().includes(q) ||
-      item.variant?.color?.toLowerCase().includes(q) ||
-      item.variant?.sku?.toLowerCase().includes(q) ||
-      item.supplier?.name?.toLowerCase().includes(q)
-    );
-  });
+    return items.filter(item => {
+      if (q && !(
+        item.variant.product.name.toLowerCase().includes(q) ||
+        item.variant.color.toLowerCase().includes(q) ||
+        item.variant.sku.toLowerCase().includes(q) ||
+        (item.supplier?.name ?? "").toLowerCase().includes(q)
+      )) return false;
+      if (productFilter !== "all" && item.variant.product.id !== productFilter) return false;
+      if (supplierFilter !== "all" && item.supplier?.name !== supplierFilter) return false;
+      if (statusFilter !== "all" && statusOf(item.quantity) !== statusFilter) return false;
+      return true;
+    });
+  }, [items, search, productFilter, supplierFilter, statusFilter]);
 
+  // ── Summary stats ──────────────────────────────────────────────────────────
   const totalUnits = filtered.reduce((s, i) => s + i.quantity, 0);
+  const lowCount = filtered.filter(i => statusOf(i.quantity) === "low_stock").length;
+  const outCount = filtered.filter(i => statusOf(i.quantity) === "out_of_stock").length;
 
-  const fetchLedger = (item: InventoryItem) => {
-    setSelectedVariant(item);
+  // ── Grid: group filtered items by product ─────────────────────────────────
+  const grouped = useMemo(() => {
+    const map = new Map<string, { productName: string; items: InventoryItem[] }>();
+    filtered.forEach(item => {
+      const pid = item.variant.product.id;
+      if (!map.has(pid)) map.set(pid, { productName: item.variant.product.name, items: [] });
+      map.get(pid)!.items.push(item);
+    });
+    return Array.from(map.values()).sort((a, b) => a.productName.localeCompare(b.productName));
+  }, [filtered]);
+
+  // ── Ledger ────────────────────────────────────────────────────────────────
+  const openLedger = (item: InventoryItem) => {
+    setSelectedItem(item);
     setLedgerLoading(true);
+    setLedger([]);
     api.get(`/inventory/${item.variant_id}/ledger`)
-      .then((res) => setLedger(res.data))
+      .then(res => setLedger(res.data))
       .catch(console.error)
       .finally(() => setLedgerLoading(false));
   };
 
+  // Running balance for ledger display (newest first → reverse to compute balance forward)
+  const ledgerWithBalance = useMemo(() => {
+    const asc = [...ledger].reverse();
+    let bal = 0;
+    const withBal = asc.map(e => {
+      bal = e.action === "IN" ? bal + e.quantity : bal - e.quantity;
+      return { ...e, balance: bal };
+    });
+    return withBal.reverse();
+  }, [ledger]);
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-        <input value={search} onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by product, variant, SKU, or supplier..."
-          className="w-full sm:w-80 rounded-lg border border-gray-300 p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" />
-        <div className="text-sm text-gray-500">
-          <span className="font-semibold text-gray-900">{filtered.length}</span> records ·
-          <span className="font-semibold text-gray-900 ml-1">{totalUnits}</span> total units
+    <div className="space-y-5">
+
+      {/* ── QR Modal (always rendered at top level) ────────────────────── */}
+      {qrSku && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setQrSku(null)}>
+          <div className="bg-white rounded-2xl p-8 shadow-2xl text-center space-y-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-gray-800">QR Code</h3>
+            <p className="text-sm text-gray-500">Print and stick this on the product</p>
+            <div id="inv-qr-print-area"><QRCodeSVG value={qrSku} size={200} /></div>
+            <p className="font-mono text-sm text-gray-600 bg-gray-100 px-3 py-1.5 rounded">{qrSku}</p>
+            <div className="flex gap-3 justify-center">
+              <button onClick={() => printQr(qrSku)} className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm font-medium">🖨️ Print</button>
+              <button onClick={() => setQrSku(null)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 text-sm font-medium">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Summary chips ─────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { label: "Showing SKUs", value: filtered.length, icon: "🏷️", cls: "text-blue-700 bg-blue-50 border-blue-100" },
+          { label: "Total Units", value: totalUnits, icon: "📦", cls: "text-emerald-700 bg-emerald-50 border-emerald-100" },
+          { label: "Low Stock", value: lowCount, icon: "⚠️", cls: "text-amber-700 bg-amber-50 border-amber-100" },
+          { label: "Out of Stock", value: outCount, icon: "🚫", cls: "text-red-700 bg-red-50 border-red-100" },
+        ].map(s => (
+          <div key={s.label} className={`rounded-xl border p-4 flex items-center gap-3 ${s.cls}`}>
+            <span className="text-xl">{s.icon}</span>
+            <div>
+              <div className="text-2xl font-bold leading-none">{s.value}</div>
+              <div className="text-xs font-medium mt-0.5 opacity-75">{s.label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Toolbar ───────────────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+        <div className="flex flex-wrap gap-3 items-center">
+          {/* Search */}
+          <div className="relative flex-1 min-w-[180px]">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
+            </svg>
+            <input
+              value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Search product, colour, SKU…"
+              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {/* Product filter */}
+          <select value={productFilter} onChange={e => setProductFilter(e.target.value)}
+            className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
+            <option value="all">All Products</option>
+            {productOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+          </select>
+
+          {/* Supplier filter */}
+          <select value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)}
+            className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
+            <option value="all">All Suppliers</option>
+            {supplierOptions.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+
+          {/* Status filter */}
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as StatusFilter)}
+            className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
+            <option value="all">All Statuses</option>
+            <option value="in_stock">In Stock</option>
+            <option value="low_stock">Low Stock</option>
+            <option value="out_of_stock">Out of Stock</option>
+          </select>
+
+          {/* Reset */}
+          {anyFilterActive && (
+            <button onClick={resetFilters}
+              className="text-sm text-gray-500 hover:text-red-500 border border-gray-200 hover:border-red-200 rounded-lg px-3 py-2 transition-colors">
+              Reset
+            </button>
+          )}
+
+          {/* View toggle — pushed right */}
+          <div className="ml-auto flex items-center gap-1 bg-gray-100 p-1 rounded-lg">
+            <button onClick={() => setView("grid")}
+              title="Grid view"
+              className={`p-1.5 rounded-md transition-colors ${view === "grid" ? "bg-white shadow-sm text-blue-600" : "text-gray-400 hover:text-gray-600"}`}>
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM11 13a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+              </svg>
+            </button>
+            <button onClick={() => setView("table")}
+              title="Table view"
+              className={`p-1.5 rounded-md transition-colors ${view === "table" ? "bg-white shadow-sm text-blue-600" : "text-gray-400 hover:text-gray-600"}`}>
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <table className="min-w-full">
-          <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>
-              <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">Product</th>
-              <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">Variant</th>
-              <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">SKU</th>
-              <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">Supplier</th>
-              <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 uppercase">Quantity</th>
-              <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr><td colSpan={6} className="p-8 text-center text-gray-400">Loading...</td></tr>
-            ) : filtered.length === 0 ? (
-              <tr><td colSpan={6} className="p-8 text-center text-gray-400">No inventory records found.</td></tr>
-             ) : filtered.map((item) => (
-              <tr 
-                key={item.id} 
-                onClick={() => fetchLedger(item)}
-                className={`border-b border-gray-100 hover:bg-blue-50 cursor-pointer transition-colors ${item.quantity < 10 ? "bg-red-50/50" : ""}`}
-              >
-                <td className="py-3 px-4 text-sm font-medium text-gray-900">{item.variant?.product?.name}</td>
-                <td className="py-3 px-4 text-sm text-gray-600">{item.variant?.color}</td>
-                <td className="py-3 px-4 text-sm text-gray-500 font-mono">{item.variant?.sku}</td>
-                <td className="py-3 px-4 text-sm text-gray-600">{item.supplier?.name || "—"}</td>
-                <td className="py-3 px-4 text-sm font-bold text-right text-gray-900">{item.quantity}</td>
-                <td className="py-3 px-4">
-                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-                    item.quantity === 0 ? "bg-red-100 text-red-700" :
-                    item.quantity < 10 ? "bg-yellow-100 text-yellow-700" :
-                    "bg-green-100 text-green-700"
-                  }`}>
-                    {item.quantity === 0 ? "Out of Stock" : item.quantity < 10 ? "Low Stock" : "In Stock"}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {loading ? (
+        <div className="py-24 text-center text-gray-400 text-sm">Loading inventory…</div>
+      ) : filtered.length === 0 ? (
+        <div className="py-24 text-center text-gray-400 text-sm">
+          No items match the current filters.{" "}
+          {anyFilterActive && <button onClick={resetFilters} className="text-blue-500 hover:underline">Clear filters</button>}
+        </div>
+      ) : view === "grid" ? (
 
-      {/* Stock Ledger Modal */}
-      {selectedVariant && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-auto max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50">
-              <div>
-                <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                  <span className="text-2xl">📜</span> Stock Ledger
-                </h3>
-                <p className="text-sm text-gray-500 mt-1">
-                  {selectedVariant.variant.product.name} · {selectedVariant.variant.color} ({selectedVariant.variant.sku})
-                </p>
+        /* ── GRID VIEW ─────────────────────────────────────────────────────── */
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {grouped.map(group => {
+            const hasAlert = group.items.some(i => statusOf(i.quantity) !== "in_stock");
+            const totalGroupUnits = group.items.reduce((s, i) => s + i.quantity, 0);
+            return (
+              <div key={group.productName}
+                className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-shadow hover:shadow-md ${hasAlert ? "border-amber-200" : "border-gray-100"}`}>
+                {/* Card header */}
+                <div className={`px-5 py-4 border-b flex items-center justify-between ${hasAlert ? "bg-amber-50 border-amber-100" : "bg-gray-50 border-gray-100"}`}>
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900">{group.productName}</h3>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {group.items.length} variant{group.items.length !== 1 ? "s" : ""} · {totalGroupUnits} units
+                    </p>
+                  </div>
+                  {hasAlert && <span className="text-amber-500 text-lg">⚠️</span>}
+                </div>
+
+                {/* Variant rows */}
+                <div className="divide-y divide-gray-50">
+                  {group.items.map(item => {
+                    const st = statusOf(item.quantity);
+                    const { label, cls } = STATUS_LABELS[st];
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => openLedger(item)}
+                        className="w-full px-5 py-3 flex items-center gap-3 hover:bg-blue-50 transition-colors text-left group"
+                      >
+                        {colourDot(item.variant.color)}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-gray-800">{item.variant.color}</span>
+                            <span className="text-xs text-gray-400 font-mono">{item.variant.sku}</span>
+                          </div>
+                          {item.supplier && (
+                            <p className="text-xs text-gray-400 truncate">{item.supplier.name}</p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-sm font-bold text-gray-900">{item.quantity}</span>
+                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${cls}`}>{label}</span>
+                          <button
+                            onClick={e => { e.stopPropagation(); setQrSku(item.variant.sku); }}
+                            title="Generate QR"
+                            className="p-1.5 rounded-lg text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition-colors"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+                            </svg>
+                          </button>
+                          <svg className="w-4 h-4 text-gray-300 group-hover:text-blue-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                          </svg>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-              <button onClick={() => setSelectedVariant(null)} className="p-2 hover:bg-gray-200 rounded-full text-gray-400 transition-colors">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+            );
+          })}
+        </div>
+
+      ) : (
+
+        /* ── TABLE VIEW ────────────────────────────────────────────────────── */
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+          <table className="min-w-full">
+            <thead className="bg-gray-50 border-b border-gray-200">
+              <tr>
+                {["Product", "Variant", "SKU", "Supplier", "Last Updated", "Qty", "Status", "QR"].map(h => (
+                  <th key={h} className={`py-3 px-4 text-xs font-medium text-gray-500 uppercase tracking-wide ${h === "Qty" ? "text-right" : "text-left"}`}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {filtered.map(item => {
+                const st = statusOf(item.quantity);
+                const { label, cls } = STATUS_LABELS[st];
+                return (
+                  <tr key={item.id} onClick={() => openLedger(item)}
+                    className="hover:bg-blue-50 cursor-pointer transition-colors group">
+                    <td className="py-3 px-4 text-sm font-medium text-gray-900">{item.variant.product.name}</td>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-2">
+                        {colourDot(item.variant.color)}
+                        <span className="text-sm text-gray-700">{item.variant.color}</span>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-sm text-gray-500 font-mono">{item.variant.sku}</td>
+                    <td className="py-3 px-4 text-sm text-gray-600">{item.supplier?.name ?? "—"}</td>
+                    <td className="py-3 px-4 text-xs text-gray-400">
+                      {new Date(item.updated_at).toLocaleDateString()}
+                    </td>
+                    <td className="py-3 px-4 text-sm font-bold text-right text-gray-900">{item.quantity}</td>
+                    <td className="py-3 px-4">
+                      <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${cls}`}>{label}</span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <button
+                        onClick={e => { e.stopPropagation(); setQrSku(item.variant.sku); }}
+                        title="Generate QR"
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-blue-500 hover:bg-blue-50 transition-colors"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+                        </svg>
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ── Ledger modal (unchanged behaviour) ───────────────────────────── */}
+      {selectedItem && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl flex flex-col max-h-[90vh] overflow-hidden">
+            {/* Modal header */}
+            <div className="p-6 border-b border-gray-100 flex items-start justify-between bg-gray-50">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  {colourDot(selectedItem.variant.color)}
+                  <h3 className="text-lg font-bold text-gray-900">
+                    {selectedItem.variant.product.name} — {selectedItem.variant.color}
+                  </h3>
+                </div>
+                <div className="flex items-center gap-3 text-sm text-gray-500">
+                  <span className="font-mono bg-gray-100 px-2 py-0.5 rounded text-xs">{selectedItem.variant.sku}</span>
+                  {selectedItem.supplier && <span>· {selectedItem.supplier.name}</span>}
+                  <span>·</span>
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_LABELS[statusOf(selectedItem.quantity)].cls}`}>
+                    {selectedItem.quantity} units · {STATUS_LABELS[statusOf(selectedItem.quantity)].label}
+                  </span>
+                </div>
+              </div>
+              <button onClick={() => setSelectedItem(null)}
+                className="p-2 hover:bg-gray-200 rounded-full text-gray-400 transition-colors ml-4">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
             </div>
 
+            {/* Ledger body */}
             <div className="flex-1 overflow-y-auto p-6">
               {ledgerLoading ? (
-                <div className="py-20 text-center text-gray-400 italic">Fetching history...</div>
-              ) : ledger.length === 0 ? (
-                <div className="py-20 text-center text-gray-400">No stock movements found for this item.</div>
+                <div className="py-16 text-center text-gray-400 text-sm">Fetching history…</div>
+              ) : ledgerWithBalance.length === 0 ? (
+                <div className="py-16 text-center text-gray-400 text-sm">No stock movements recorded yet.</div>
               ) : (
-                <div className="space-y-4">
-                  <table className="min-w-full">
-                    <thead className="border-b border-gray-200">
-                      <tr>
-                        <th className="text-left pb-3 text-xs font-medium text-gray-500 uppercase">Date</th>
-                        <th className="text-left pb-3 text-xs font-medium text-gray-500 uppercase">Action</th>
-                        <th className="text-left pb-3 text-xs font-medium text-gray-500 uppercase">Reference</th>
-                        <th className="text-right pb-3 text-xs font-medium text-gray-500 uppercase">Change</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50">
-                      {ledger.map((entry) => (
-                        <tr key={entry.id}>
-                          <td className="py-4 text-sm text-gray-600">
-                            {new Date(entry.created_at).toLocaleString()}
-                          </td>
-                          <td className="py-4">
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
-                              entry.action === "IN" ? "bg-green-100 text-green-700" : "bg-orange-100 text-orange-700"
-                            }`}>
-                              {entry.action}
-                            </span>
-                          </td>
-                          <td className="py-4 text-sm text-gray-500">
-                            {entry.reference_type} · <span className="text-[10px] font-mono">{entry.reference_id.slice(0, 8)}</span>
-                          </td>
-                          <td className={`py-4 text-sm text-right font-bold ${entry.action === "IN" ? "text-green-600" : "text-orange-600"}`}>
-                            {entry.action === "IN" ? "+" : "-"}{entry.quantity}
-                          </td>
-                        </tr>
+                <table className="min-w-full">
+                  <thead>
+                    <tr className="border-b border-gray-100">
+                      {["Date & Time", "Action", "Reference", "Change", "Balance"].map(h => (
+                        <th key={h} className={`pb-3 text-xs font-medium text-gray-500 uppercase tracking-wide ${["Change", "Balance"].includes(h) ? "text-right" : "text-left"}`}>
+                          {h}
+                        </th>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {ledgerWithBalance.map(entry => (
+                      <tr key={entry.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="py-3 text-sm text-gray-600 pr-4">
+                          {new Date(entry.created_at).toLocaleString()}
+                        </td>
+                        <td className="py-3 pr-4">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wide ${
+                            entry.action === "IN" ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"
+                          }`}>
+                            {entry.action}
+                          </span>
+                        </td>
+                        <td className="py-3 pr-4 text-sm text-gray-500">
+                          <span className="capitalize">{entry.reference_type.toLowerCase()}</span>
+                          <span className="ml-1 text-[10px] font-mono text-gray-400">{entry.reference_id.slice(0, 8)}</span>
+                        </td>
+                        <td className={`py-3 pr-4 text-sm font-bold text-right ${entry.action === "IN" ? "text-emerald-600" : "text-orange-600"}`}>
+                          {entry.action === "IN" ? "+" : "−"}{entry.quantity}
+                        </td>
+                        <td className="py-3 text-sm font-semibold text-right text-gray-700">
+                          {entry.balance}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </div>
 
-            <div className="p-6 border-t border-gray-100 bg-gray-50 flex justify-end">
-              <button 
-                onClick={() => setSelectedVariant(null)}
-                className="px-6 py-2.5 bg-white border border-gray-300 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-all shadow-sm"
-              >
+            <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end">
+              <button onClick={() => setSelectedItem(null)}
+                className="px-5 py-2 bg-white border border-gray-300 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50 transition shadow-sm">
                 Close
               </button>
             </div>
