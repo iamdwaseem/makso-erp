@@ -1,7 +1,9 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'http://192.168.1.7:4000/api',
+  // Use VITE_API_URL if defined (e.g., local dev), otherwise fallback to '/api'
+  // for production where Nginx handles routing /api to the backend.
+  baseURL: import.meta.env.VITE_API_URL || '/api',
   headers: {
     'Content-Type': 'application/json',
   },
