@@ -1,0 +1,163 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Supplier {
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String
+  phone      String
+  email      String?
+  address    String?
+  created_at DateTime @default(now())
+
+  purchases  Purchase[]
+
+  @@map("suppliers")
+}
+
+model Customer {
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String
+  phone      String
+  email      String?
+  address    String?
+  created_at DateTime @default(now())
+
+  sales      Sale[]
+
+  @@map("customers")
+}
+
+model Product {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String
+  sku         String    @unique
+  description String?
+  created_at  DateTime  @default(now())
+  variants    Variant[]
+
+  @@map("products")
+}
+
+model Variant {
+  id         String            @id @default(uuid()) @db.Uuid
+  product_id String            @db.Uuid
+  color      String
+  sku        String            @unique
+  created_at DateTime          @default(now())
+
+  product        Product           @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  inventory      Inventory?
+  ledger         InventoryLedger[]
+  purchase_items PurchaseItem[]
+  sale_items     SaleItem[]
+  scan_logs      ScanLog[]
+
+  @@map("variants")
+}
+
+enum LedgerAction {
+  IN
+  OUT
+}
+
+model Inventory {
+  id         String   @id @default(uuid()) @db.Uuid
+  variant_id String   @unique @db.Uuid
+  quantity   Int      @default(0)
+  updated_at DateTime @updatedAt
+
+  variant    Variant  @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+
+  @@map("inventory")
+}
+
+model InventoryLedger {
+  id             String       @id @default(uuid()) @db.Uuid
+  variant_id     String       @db.Uuid
+  action         LedgerAction
+  quantity       Int
+  reference_type String
+  reference_id   String       @db.Uuid
+  created_at     DateTime     @default(now())
+
+  variant        Variant      @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+
+  @@map("inventory_ledger")
+}
+
+model Purchase {
+  id             String         @id @default(uuid()) @db.Uuid
+  supplier_id    String         @db.Uuid
+  invoice_number String?
+  purchase_date  DateTime       @default(now())
+  created_at     DateTime       @default(now())
+
+  supplier       Supplier       @relation(fields: [supplier_id], references: [id], onDelete: Restrict)
+  items          PurchaseItem[]
+
+  @@map("purchases")
+}
+
+model PurchaseItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  purchase_id String   @db.Uuid
+  variant_id  String   @db.Uuid
+  quantity    Int
+
+  purchase    Purchase @relation(fields: [purchase_id], references: [id], onDelete: Cascade)
+  variant     Variant  @relation(fields: [variant_id], references: [id], onDelete: Restrict)
+
+  @@map("purchase_items")
+}
+
+model Sale {
+  id             String     @id @default(uuid()) @db.Uuid
+  customer_id    String     @db.Uuid
+  invoice_number String?
+  sale_date      DateTime   @default(now())
+  created_at     DateTime   @default(now())
+
+  customer       Customer   @relation(fields: [customer_id], references: [id], onDelete: Restrict)
+  items          SaleItem[]
+
+  @@map("sales")
+}
+
+model SaleItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  sale_id     String   @db.Uuid
+  variant_id  String   @db.Uuid
+  quantity    Int
+
+  sale        Sale     @relation(fields: [sale_id], references: [id], onDelete: Cascade)
+  variant     Variant  @relation(fields: [variant_id], references: [id], onDelete: Restrict)
+
+  @@map("sale_items")
+}
+
+model ScanLog {
+  id         String       @id @default(uuid()) @db.Uuid
+  variant_id String       @db.Uuid
+  action     LedgerAction
+  quantity   Int
+  station_id String?      @db.Uuid
+  created_at DateTime     @default(now())
+
+  variant    Variant      @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+
+  @@map("scan_logs")
+}
+
+
