@@ -28,6 +28,7 @@
   "license": "ISC",
   "dependencies": {
     "@prisma/client": "^5.10.2",
+    "dotenv": "^16.4.5",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "express": "^5.2.1",
