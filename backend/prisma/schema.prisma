@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -13,60 +7,315 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Organization {
+  id                String             @id @default(uuid()) @db.Uuid
+  name              String
+  slug              String             @unique
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  customers         Customer[]
+  dashboard_metrics DashboardMetrics[]
+  inventory         Inventory[]
+  ledger_entries    InventoryLedger[]
+  summaries         InventorySummary[]
+  products          Product[]
+  purchase_items    PurchaseItem[]
+  purchases         Purchase[]
+  sale_items        SaleItem[]
+  sales             Sale[]
+  scan_logs         ScanLog[]
+  suppliers         Supplier[]
+  users             User[]
+  variants          Variant[]
+  warehouses        Warehouse[]
+
+  @@map("organizations")
+}
+
+model Warehouse {
+  id                String             @id @default(uuid()) @db.Uuid
+  organization_id   String             @db.Uuid
+  name              String
+  code              String
+  location          String?
+  created_at        DateTime           @default(now())
+  updated_at        DateTime           @updatedAt
+  dashboard_metrics DashboardMetrics[]
+  inventories       Inventory[]
+  ledger_entries    InventoryLedger[]
+  summaries         InventorySummary[]
+  scan_logs         ScanLog[]
+  user_assignments  UserWarehouse[]
+  organization      Organization       @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, code])
+  @@index([organization_id])
+  @@map("warehouses")
+}
+
 model Supplier {
-  id         String   @id @default(uuid()) @db.Uuid
-  name       String
-  phone      String
-  email      String?
-  address    String?
-  created_at DateTime @default(now())
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  name            String
+  phone           String
+  email           String?
+  address         String?
+  created_at      DateTime     @default(now())
+  purchases       Purchase[]
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
 
-  purchases  Purchase[]
-
+  @@index([organization_id])
   @@map("suppliers")
 }
 
 model Customer {
-  id         String   @id @default(uuid()) @db.Uuid
-  name       String
-  phone      String
-  email      String?
-  address    String?
-  created_at DateTime @default(now())
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  name            String
+  phone           String
+  email           String?
+  address         String?
+  created_at      DateTime     @default(now())
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  sales           Sale[]
 
-  sales      Sale[]
-
+  @@index([organization_id])
   @@map("customers")
 }
 
 model Product {
-  id          String    @id @default(uuid()) @db.Uuid
-  name        String
-  sku         String    @unique
-  description String?
-  created_at  DateTime  @default(now())
-  deleted_at  DateTime? // soft delete — never truly remove for audit trail
-  variants    Variant[]
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  name            String
+  sku             String
+  description     String?
+  created_at      DateTime     @default(now())
+  deleted_at      DateTime?
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  variants        Variant[]
 
+  @@unique([organization_id, sku])
+  @@index([organization_id])
+  @@index([name])
+  @@index([created_at])
   @@map("products")
 }
 
 model Variant {
-  id         String            @id @default(uuid()) @db.Uuid
-  product_id String            @db.Uuid
-  color      String
-  sku        String            @unique
-  created_at DateTime          @default(now())
-  deleted_at DateTime? // soft delete
+  id              String             @id @default(uuid()) @db.Uuid
+  organization_id String             @db.Uuid
+  product_id      String             @db.Uuid
+  color           String
+  sku             String
+  created_at      DateTime           @default(now())
+  deleted_at      DateTime?
+  inventory       Inventory[]
+  ledger          InventoryLedger[]
+  summaries       InventorySummary[]
+  purchase_items  PurchaseItem[]
+  sale_items      SaleItem[]
+  scan_logs       ScanLog[]
+  organization    Organization       @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  product         Product            @relation(fields: [product_id], references: [id], onDelete: Cascade)
 
-  product        Product           @relation(fields: [product_id], references: [id], onDelete: Cascade)
-  inventory      Inventory?
-  ledger         InventoryLedger[]
-  purchase_items PurchaseItem[]
-  sale_items     SaleItem[]
-  scan_logs      ScanLog[]
-
+  @@unique([organization_id, sku])
+  @@index([organization_id])
+  @@index([color])
+  @@index([created_at])
   @@map("variants")
+}
+
+model Inventory {
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  variant_id      String       @db.Uuid
+  quantity        Int          @default(0)
+  updated_at      DateTime     @updatedAt
+  warehouse_id    String       @db.Uuid
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  variant         Variant      @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+  warehouse       Warehouse    @relation(fields: [warehouse_id], references: [id], onDelete: Cascade)
+
+  @@unique([variant_id, warehouse_id])
+  @@index([organization_id])
+  @@index([warehouse_id])
+  @@index([quantity])
+  @@index([updated_at])
+  @@map("inventory")
+}
+
+model InventorySummary {
+  id                String       @id @default(uuid()) @db.Uuid
+  organization_id   String       @db.Uuid
+  warehouse_id      String       @db.Uuid
+  variant_id        String       @db.Uuid
+  total_quantity    Int          @default(0)
+  reserved_quantity Int          @default(0)
+  updated_at        DateTime     @updatedAt
+  organization      Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  variant           Variant      @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+  warehouse         Warehouse    @relation(fields: [warehouse_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, warehouse_id, variant_id])
+  @@index([organization_id])
+  @@index([warehouse_id])
+  @@index([variant_id])
+  @@index([organization_id, warehouse_id])
+  @@map("inventory_summaries")
+}
+
+model InventoryLedger {
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  variant_id      String       @db.Uuid
+  action          LedgerAction
+  quantity        Int
+  reference_type  String
+  reference_id    String       @db.Uuid
+  created_at      DateTime     @default(now())
+  warehouse_id    String       @db.Uuid
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  variant         Variant      @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+  warehouse       Warehouse    @relation(fields: [warehouse_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id])
+  @@index([variant_id])
+  @@index([warehouse_id])
+  @@index([created_at])
+  @@map("inventory_ledger")
+}
+
+model Purchase {
+  id              String         @id @default(uuid()) @db.Uuid
+  organization_id String         @db.Uuid
+  supplier_id     String         @db.Uuid
+  invoice_number  String?
+  purchase_date   DateTime       @default(now())
+  created_at      DateTime       @default(now())
+  items           PurchaseItem[]
+  organization    Organization   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  supplier        Supplier       @relation(fields: [supplier_id], references: [id])
+
+  @@index([organization_id])
+  @@index([supplier_id])
+  @@index([purchase_date])
+  @@index([created_at])
+  @@map("purchases")
+}
+
+model PurchaseItem {
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  purchase_id     String       @db.Uuid
+  variant_id      String       @db.Uuid
+  quantity        Int
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  purchase        Purchase     @relation(fields: [purchase_id], references: [id], onDelete: Cascade)
+  variant         Variant      @relation(fields: [variant_id], references: [id])
+
+  @@index([organization_id])
+  @@index([variant_id])
+  @@index([purchase_id])
+  @@map("purchase_items")
+}
+
+model Sale {
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  customer_id     String       @db.Uuid
+  invoice_number  String?
+  sale_date       DateTime     @default(now())
+  created_at      DateTime     @default(now())
+  items           SaleItem[]
+  customer        Customer     @relation(fields: [customer_id], references: [id])
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id])
+  @@index([customer_id])
+  @@index([sale_date])
+  @@index([created_at])
+  @@map("sales")
+}
+
+model SaleItem {
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  sale_id         String       @db.Uuid
+  variant_id      String       @db.Uuid
+  quantity        Int
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  sale            Sale         @relation(fields: [sale_id], references: [id], onDelete: Cascade)
+  variant         Variant      @relation(fields: [variant_id], references: [id])
+
+  @@index([organization_id])
+  @@index([variant_id])
+  @@index([sale_id])
+  @@map("sale_items")
+}
+
+model ScanLog {
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  variant_id      String       @db.Uuid
+  action          LedgerAction
+  quantity        Int
+  station_id      String?      @db.Uuid
+  created_at      DateTime     @default(now())
+  warehouse_id    String       @db.Uuid
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  variant         Variant      @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+  warehouse       Warehouse    @relation(fields: [warehouse_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id])
+  @@index([variant_id])
+  @@index([warehouse_id])
+  @@index([created_at])
+  @@map("scan_logs")
+}
+
+model User {
+  id              String          @id @default(uuid()) @db.Uuid
+  name            String
+  email           String          @unique
+  password        String
+  created_at      DateTime        @default(now())
+  organization_id String?         @db.Uuid
+  role            UserRole        @default(STAFF)
+  warehouses      UserWarehouse[]
+  organization    Organization?   @relation(fields: [organization_id], references: [id])
+
+  @@map("users")
+}
+
+model UserWarehouse {
+  id           String    @id @default(uuid()) @db.Uuid
+  user_id      String    @db.Uuid
+  warehouse_id String    @db.Uuid
+  user         User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  warehouse    Warehouse @relation(fields: [warehouse_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, warehouse_id])
+  @@index([user_id])
+  @@map("user_warehouses")
+}
+
+model DashboardMetrics {
+  id                    String       @id @default(uuid()) @db.Uuid
+  organization_id       String       @db.Uuid
+  warehouse_id          String?      @db.Uuid
+  total_products        Int          @default(0)
+  total_variants        Int          @default(0)
+  total_stock           Int          @default(0)
+  total_sales_today     Int          @default(0)
+  total_purchases_today Int          @default(0)
+  low_stock_items       Int          @default(0)
+  calculated_at         DateTime     @default(now())
+  organization          Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  warehouse             Warehouse?   @relation(fields: [warehouse_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id])
+  @@index([warehouse_id])
+  @@map("dashboard_metrics")
 }
 
 enum LedgerAction {
@@ -74,113 +323,8 @@ enum LedgerAction {
   OUT
 }
 
-model Inventory {
-  id         String   @id @default(uuid()) @db.Uuid
-  variant_id String   @unique @db.Uuid
-  quantity   Int      @default(0)
-  updated_at DateTime @updatedAt
-
-  variant    Variant  @relation(fields: [variant_id], references: [id], onDelete: Cascade)
-
-  @@map("inventory")
+enum UserRole {
+  ADMIN
+  MANAGER
+  STAFF
 }
-
-model InventoryLedger {
-  id             String       @id @default(uuid()) @db.Uuid
-  variant_id     String       @db.Uuid
-  action         LedgerAction
-  quantity       Int
-  reference_type String
-  reference_id   String       @db.Uuid
-  created_at     DateTime     @default(now())
-
-  variant        Variant      @relation(fields: [variant_id], references: [id], onDelete: Cascade)
-
-  @@index([variant_id])
-  @@index([created_at])
-  @@map("inventory_ledger")
-}
-
-model Purchase {
-  id             String         @id @default(uuid()) @db.Uuid
-  supplier_id    String         @db.Uuid
-  invoice_number String?
-  purchase_date  DateTime       @default(now())
-  created_at     DateTime       @default(now())
-
-  supplier       Supplier       @relation(fields: [supplier_id], references: [id], onDelete: Restrict)
-  items          PurchaseItem[]
-
-  @@index([supplier_id])
-  @@index([purchase_date])
-  @@map("purchases")
-}
-
-model PurchaseItem {
-  id          String   @id @default(uuid()) @db.Uuid
-  purchase_id String   @db.Uuid
-  variant_id  String   @db.Uuid
-  quantity    Int
-
-  purchase    Purchase @relation(fields: [purchase_id], references: [id], onDelete: Cascade)
-  variant     Variant  @relation(fields: [variant_id], references: [id], onDelete: Restrict)
-
-  @@index([variant_id])
-  @@index([purchase_id])
-  @@map("purchase_items")
-}
-
-model Sale {
-  id             String     @id @default(uuid()) @db.Uuid
-  customer_id    String     @db.Uuid
-  invoice_number String?
-  sale_date      DateTime   @default(now())
-  created_at     DateTime   @default(now())
-
-  customer       Customer   @relation(fields: [customer_id], references: [id], onDelete: Restrict)
-  items          SaleItem[]
-
-  @@index([customer_id])
-  @@index([sale_date])
-  @@map("sales")
-}
-
-model SaleItem {
-  id          String   @id @default(uuid()) @db.Uuid
-  sale_id     String   @db.Uuid
-  variant_id  String   @db.Uuid
-  quantity    Int
-
-  sale        Sale     @relation(fields: [sale_id], references: [id], onDelete: Cascade)
-  variant     Variant  @relation(fields: [variant_id], references: [id], onDelete: Restrict)
-
-  @@index([variant_id])
-  @@index([sale_id])
-  @@map("sale_items")
-}
-
-model ScanLog {
-  id         String       @id @default(uuid()) @db.Uuid
-  variant_id String       @db.Uuid
-  action     LedgerAction
-  quantity   Int
-  station_id String?      @db.Uuid
-  created_at DateTime     @default(now())
-
-  variant    Variant      @relation(fields: [variant_id], references: [id], onDelete: Cascade)
-
-  @@index([variant_id])
-  @@index([created_at])
-  @@map("scan_logs")
-}
-
-model User {
-  id         String   @id @default(uuid()) @db.Uuid
-  name       String
-  email      String   @unique
-  password   String
-  created_at DateTime @default(now())
-
-  @@map("users")
-}
-

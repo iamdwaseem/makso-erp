@@ -6,7 +6,8 @@ export default defineConfig({
     environment: "node",
     // Run test files sequentially to avoid DB race conditions
     pool: "forks",
-    poolOptions: { forks: { singleFork: true } },
+    maxWorkers: 1,
+    minWorkers: 1,
     fileParallelism: false,
     reporters: ["verbose"],
   },

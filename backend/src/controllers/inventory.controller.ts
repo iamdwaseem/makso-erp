@@ -1,68 +1,66 @@
 import { Request, Response } from "express";
 import { InventoryService } from "../services/inventory.service.js";
 import { adjustInventorySchema } from "../validators/inventory.validator.js";
+import { BaseController } from "./BaseController.js";
 
-const inventoryService = new InventoryService();
+export class InventoryController extends BaseController {
+  private getService(req: Request): InventoryService {
+    const ctx = this.getServiceContext(req);
+    return new InventoryService(
+      ctx.organizationId,
+      ctx.userId,
+      ctx.userRole,
+      ctx.allowedWarehouseIds
+    );
+  }
 
-export class InventoryController {
-  async getAllInventory(req: Request, res: Response) {
+  getAllInventory = async (req: Request, res: Response) => {
     try {
-      const limit  = Math.min(parseInt(String(req.query.limit  ?? 500)), 1000);
-      const offset = parseInt(String(req.query.offset ?? 0));
-      const [inventory, total] = await Promise.all([
-        inventoryService.getAllInventory({ limit, offset }),
-        inventoryService.countInventory(),
-      ]);
-      res.setHeader("X-Total-Count", total);
-      return res.status(200).json(inventory);
+      const { page, limit, search } = this.getPagination(req);
+      const productId = req.query.productId as string | undefined;
+      const status = req.query.status as string | undefined;
+      const warehouseId = req.query.warehouseId as string | undefined;
+
+      const service = this.getService(req);
+      const result = await service.getAllInventory({ page, limit, search, productId, status, warehouseId });
+      return this.success(res, result);
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return this.handleError(res, error);
     }
   }
 
-  async getInventoryByVariantId(req: Request, res: Response) {
+  getInventoryByVariantId = async (req: Request, res: Response) => {
     try {
       const variantId = req.params.variantId as string;
-      const inventory = await inventoryService.getInventoryByVariantId(variantId);
-      return res.status(200).json(inventory);
+      const warehouseId = req.query.warehouseId as string | undefined;
+      const service = this.getService(req);
+      const inventory = await service.getInventoryByVariantId(variantId, warehouseId);
+      return this.success(res, inventory);
     } catch (error: any) {
-      const status = error.message === "Variant not found" ? 404 : 500;
-      return res.status(status).json({ error: error.message });
+      return this.handleError(res, error, "Variant not found");
     }
   }
 
-  async adjustInventory(req: Request, res: Response) {
+  adjustInventory = async (req: Request, res: Response) => {
     try {
-      // Parse using Zod
-      const validatedData = adjustInventorySchema.parse(req.body);
-      const result = await inventoryService.adjustInventory(validatedData);
-      
-      return res.status(200).json(result);
+      const validatedData = adjustInventorySchema.parse(this.getBody(req));
+      const service = this.getService(req);
+      const result = await service.adjustInventory(validatedData);
+      return this.success(res, result);
     } catch (error: any) {
-      if (error.name === "ZodError") {
-        return res.status(400).json({ errors: error.errors });
-      }
-      
-      if (error.message === "Variant not found") {
-         return res.status(404).json({ error: error.message });
-      }
-
-      if (error.message === "Insufficient inventory") {
-         return res.status(400).json({ error: error.message });
-      }
-
-      return res.status(500).json({ error: error.message });
+      return this.handleError(res, error, "Variant not found");
     }
   }
 
-  async getLedgerByVariantId(req: Request, res: Response) {
+  getLedgerByVariantId = async (req: Request, res: Response) => {
     try {
       const variantId = req.params.variantId as string;
-      const ledger = await inventoryService.getLedgerByVariantId(variantId);
-      return res.status(200).json(ledger);
+      const warehouseId = req.query.warehouseId as string | undefined;
+      const service = this.getService(req);
+      const ledger = await service.getLedgerByVariantId(variantId, warehouseId);
+      return this.success(res, ledger);
     } catch (error: any) {
-      const status = error.message === "Variant not found" ? 404 : 500;
-      return res.status(status).json({ error: error.message });
+      return this.handleError(res, error, "Variant not found");
     }
   }
 }

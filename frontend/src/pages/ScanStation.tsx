@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Html5QrcodeScanner } from "html5-qrcode";
 import api from "../api";
+import { useWarehouseStore } from "../store/warehouseStore";
+import { useScanner } from "../hooks/useScanner";
 
 interface ScanEntry {
   sku: string;
@@ -47,15 +49,16 @@ export function ScanStation() {
   const [newCustomerPhone, setNewCustomerPhone] = useState("");
   const [newCustomerAddress, setNewCustomerAddress] = useState("");
   const [customers, setCustomers] = useState<any[]>([]);
-  const [variants, setVariants] = useState<any[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [manualSku, setManualSku] = useState("");
+  const currentWarehouseId = useWarehouseStore(state => state.currentWarehouseId);
 
   const lastScanRef = useRef<string | null>(null);
+  const scannerRef = useRef<Html5QrcodeScanner | null>(null);
+  const scannerMountedRef = useRef(false);
 
   useEffect(() => {
-    api.get("/customers").then(r => setCustomers(r.data)).catch(console.error);
-    api.get("/variants").then(r => setVariants(r.data)).catch(console.error);
+    api.get("/customers", { params: { limit: 1000 } }).then(r => setCustomers(r.data.data)).catch(console.error);
   }, []);
 
   useEffect(() => { saveTodaysHistory(scanHistory); }, [scanHistory]);
@@ -87,43 +90,76 @@ export function ScanStation() {
 
   const clearCart = () => setCart([]);
 
-  // ── QR scanner ───────────────────────────────────────────────────────────
-  useEffect(() => {
-    const scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: { width: 250, height: 250 } }, false);
+  const processScannedCode = (decodedText: string) => {
+    if (lastScanRef.current === decodedText) return;
+    lastScanRef.current = decodedText;
 
-    function onScanSuccess(decodedText: string) {
-      if (lastScanRef.current === decodedText) return;
-      lastScanRef.current = decodedText;
+    let apiPath = `/variants/sku/${decodedText}`;
+    let displayCode = decodedText;
 
-      const variant = variants.find(v => v.sku === decodedText);
-      if (!variant) {
-        setStatus({ message: `✗ SKU "${decodedText}" not found in system`, type: "error" });
-        setTimeout(() => { lastScanRef.current = null; }, 2000);
-        return;
-      }
-
-      addToCart(variant, 1);
-      setStatus({ message: `+ Added: ${variant.product?.name} — ${variant.color} (${decodedText})`, type: "success" });
-      setTimeout(() => { lastScanRef.current = null; setStatus({ message: "", type: "" }); }, 2000);
+    if (decodedText.startsWith("VAR:")) {
+      const variantId = decodedText.replace("VAR:", "");
+      apiPath = `/variants/${variantId}`;
+      displayCode = variantId;
     }
 
-    scanner.render(onScanSuccess, () => {});
-    return () => { scanner.clear().catch(() => {}); };
-  }, [variants]);
+    setStatus({ message: `🔍 Looking up item: ${displayCode}...`, type: "" });
+
+    api.get(apiPath)
+      .then(res => {
+        const variant = res.data;
+        addToCart(variant, 1);
+        setStatus({ message: `+ Added: ${variant.product?.name} — ${variant.color}`, type: "success" });
+        setTimeout(() => { lastScanRef.current = null; setStatus({ message: "", type: "" }); }, 2000);
+      })
+      .catch(err => {
+        const msg = err.response?.status === 404 ? `✗ Item "${displayCode}" not found` : "✗ Error looking up item";
+        setStatus({ message: msg, type: "error" });
+        setTimeout(() => { lastScanRef.current = null; }, 2000);
+      });
+  };
+
+  // Hardware scanner integration
+  useScanner(processScannedCode);
+
+  // ── QR scanner (Camera) ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (scannerMountedRef.current) return;
+    scannerMountedRef.current = true;
+
+    const scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: { width: 250, height: 250 } }, false);
+    scannerRef.current = scanner;
+    scanner.render(processScannedCode, () => {});
+
+    return () => {
+      const activeScanner = scannerRef.current;
+      scannerRef.current = null;
+      scannerMountedRef.current = false;
+      if (activeScanner) {
+        activeScanner.clear().catch(() => {});
+      }
+    };
+  }, []); 
 
   // ── Manual SKU lookup ────────────────────────────────────────────────────
   const handleManualLookup = () => {
     const sku = manualSku.trim();
     if (!sku) return;
-    const variant = variants.find(v => v.sku === sku);
-    if (!variant) {
-      setStatus({ message: `✗ SKU "${sku}" not found in system`, type: "error" });
-      return;
-    }
-    addToCart(variant, 1);
-    setStatus({ message: `+ Added: ${variant.product?.name} — ${variant.color}`, type: "success" });
-    setManualSku("");
-    setTimeout(() => setStatus({ message: "", type: "" }), 2000);
+    
+    setStatus({ message: `🔍 Looking up SKU: ${sku}...`, type: "" });
+
+    api.get(`/variants/sku/${sku}`)
+      .then(res => {
+        const variant = res.data;
+        addToCart(variant, 1);
+        setStatus({ message: `+ Added: ${variant.product?.name} — ${variant.color}`, type: "success" });
+        setManualSku("");
+        setTimeout(() => setStatus({ message: "", type: "" }), 2000);
+      })
+      .catch(err => {
+        const msg = err.response?.status === 404 ? `✗ SKU "${sku}" not found` : "✗ Error looking up SKU";
+        setStatus({ message: msg, type: "error" });
+      });
   };
 
   // ── Confirm checkout ──────────────────────────────────────────────────────
@@ -153,10 +189,16 @@ export function ScanStation() {
         setSubmitting(false);
         return;
       }
+      if (currentWarehouseId === "all") {
+        alert("Please select a specific warehouse in the header to record sales.");
+        setSubmitting(false);
+        return;
+      }
 
       await api.post("/sales", {
-        customer_id: customerId,
-        items: cart.map(c => ({ variant_id: c.variantId, quantity: c.quantity })),
+        customerId: customerId,
+        warehouseId: currentWarehouseId,
+        items: cart.map(c => ({ variantId: c.variantId, quantity: c.quantity })),
       });
 
       const customerName = customerMode === "new"

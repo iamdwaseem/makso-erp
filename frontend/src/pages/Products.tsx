@@ -11,8 +11,9 @@ export function Products() {
   const { register: rv, handleSubmit: hsv, reset: resetV } = useForm();
 
   const fetchAll = () => {
-    api.get("/products").then(r => setProducts(r.data)).catch(console.error);
-    api.get("/variants").then(r => setVariants(r.data)).catch(console.error);
+    // We request high limits here since we populate dropdowns
+    api.get("/products", { params: { limit: 1000 } }).then(r => setProducts(r.data.data)).catch(console.error);
+    api.get("/variants", { params: { limit: 1000 } }).then(r => setVariants(r.data.data)).catch(console.error);
   };
 
   useEffect(() => { fetchAll(); }, []);

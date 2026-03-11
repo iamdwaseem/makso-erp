@@ -1,100 +1,232 @@
-import { PrismaClient, Inventory, InventoryLedger, LedgerAction } from "@prisma/client";
+import { Inventory, InventoryLedger, LedgerAction, PrismaClient, Prisma } from "@prisma/client";
 import { AdjustInventoryInput } from "../validators/inventory.validator.js";
+import { BaseRepository } from "./BaseRepository.js";
 
-const prisma = new PrismaClient();
+export class InventoryRepository extends BaseRepository {
+  constructor(
+    prisma: PrismaClient | Prisma.TransactionClient, 
+    organizationId: string,
+    userId?: string,
+    userRole?: string,
+    allowedWarehouseIds: string[] = []
+  ) {
+    super(prisma, organizationId, userId, userRole, allowedWarehouseIds);
+  }
 
-export class InventoryRepository {
-  /**
-   * Eliminated N+1: was doing one purchaseItem query per inventory row.
-   * Now: 2 queries total — fetch all inventory, fetch all purchaseItems ordered
-   * by date desc, then pick the first (= latest) per variant client-side.
-   */
-  async findAll({ limit = 500, offset = 0 }: { limit?: number; offset?: number } = {}) {
-    const [records, allPurchaseItems] = await Promise.all([
-      prisma.inventory.findMany({
-        include: { variant: { include: { product: true } } },
-        skip: offset,
-        take: limit,
-      }),
-      prisma.purchaseItem.findMany({
-        include: { purchase: { include: { supplier: true } } },
-        orderBy: { purchase: { created_at: "desc" } },
-      }),
-    ]);
+  async findAll({ 
+    page = 1, 
+    limit = 50,
+    search,
+    productId,
+    status,
+    warehouseId
+  }: { 
+    page?: number; 
+    limit?: number;
+    search?: string;
+    productId?: string;
+    status?: string;
+    warehouseId?: string;
+  } = {}) {
+    const and: any[] = [];
 
-    // Build variant_id → latest supplier map in a single O(n) pass
+    if (search) {
+      and.push({
+        OR: [
+          { variant: { sku: { contains: search, mode: "insensitive" } } },
+          { variant: { product: { name: { contains: search, mode: "insensitive" } } } },
+        ],
+      });
+    }
+
+    if (productId && productId !== "all") {
+      and.push({ variant: { product_id: productId } });
+    }
+
+    if (warehouseId && warehouseId !== "all") {
+      and.push({ warehouse_id: warehouseId });
+    }
+
+    if (status && status !== "all") {
+      if (status === "out_of_stock") and.push({ total_quantity: 0 });
+      else if (status === "low_stock") and.push({ total_quantity: { gt: 0, lt: 10 } });
+      else if (status === "in_stock") and.push({ total_quantity: { gte: 10 } });
+    }
+
+    const where = this.warehouseWhere(and.length > 0 ? { AND: and } : {});
+    
+    const paginated = await this.paginate<any>(
+      (this.prisma as any).inventorySummary,
+      where,
+      page,
+      limit,
+      { 
+        variant: { include: { product: true } },
+        warehouse: true
+      },
+      { variant: { product: { name: "asc" } } }
+    );
+
+    const records = paginated.data;
+    const variantIds = records.map((r: any) => r.variant_id);
+    
+    const relevantPurchaseItems = await (this.prisma as any).purchaseItem.findMany({
+      where: this.tenantWhere({ variant_id: { in: variantIds } }),
+      include: { purchase: { include: { supplier: true } } },
+      orderBy: { purchase: { created_at: "desc" } },
+    });
+
     const supplierByVariant = new Map<string, any>();
-    for (const item of allPurchaseItems) {
+    for (const item of relevantPurchaseItems) {
       if (!supplierByVariant.has(item.variant_id)) {
         supplierByVariant.set(item.variant_id, item.purchase?.supplier ?? null);
       }
     }
 
-    return records.map(inv => ({
-      ...inv,
-      supplier: supplierByVariant.get(inv.variant_id) ?? null,
-    }));
+    return {
+      ...paginated,
+      data: records.map((inv: any) => ({
+        ...inv,
+        quantity: inv.total_quantity, 
+        supplier: supplierByVariant.get(inv.variant_id) ?? null,
+      }))
+    };
   }
 
-  async findByVariantId(variantId: string): Promise<Inventory | null> {
-    return prisma.inventory.findUnique({
-      where: { variant_id: variantId },
-      include: { variant: true },
+  async findByVariantId(variantId: string, warehouseId?: string): Promise<any | null> {
+    const record = await (this.prisma as any).inventorySummary.findFirst({
+      where: this.tenantWhere({ variant_id: variantId, warehouse_id: warehouseId }),
+      include: { variant: true, warehouse: true },
     });
+
+    if (!record) return null;
+
+    return {
+      ...record,
+      quantity: record.total_quantity,
+    };
   }
 
   async adjustInventory(
     data: AdjustInventoryInput,
-    txClient?: any,
+    txClient?: Prisma.TransactionClient,
   ): Promise<{ inventory: Inventory; ledger: InventoryLedger }> {
-    const execute = async (tx: any) => {
-      let inventory = await tx.inventory.findUnique({
-        where: { variant_id: data.variant_id },
-      });
+    const execute = async (tx: Prisma.TransactionClient) => {
+      let updatedInventory: Inventory | null = null;
 
-      if (!inventory) {
-        inventory = await tx.inventory.create({
-          data: { variant_id: data.variant_id, quantity: 0 },
-        });
-      }
-
-      let newQuantity = inventory.quantity;
       if (data.action === "IN") {
-        newQuantity += data.quantity;
+        // Upsert keeps IN flow idempotent and safe under concurrency.
+        await (tx as any).inventory.upsert({
+          where: {
+            variant_id_warehouse_id: {
+              variant_id: data.variant_id,
+              warehouse_id: data.warehouse_id,
+            },
+          },
+          create: this.tenantData({
+            variant_id: data.variant_id,
+            warehouse_id: data.warehouse_id,
+            quantity: data.quantity,
+          }),
+          update: {
+            quantity: { increment: data.quantity },
+          },
+        });
       } else if (data.action === "OUT") {
-        newQuantity -= data.quantity;
-        if (newQuantity < 0) throw new Error("Insufficient inventory");
+        // Atomic stock decrement: succeeds only when enough stock exists.
+        const decremented = await (tx as any).inventory.updateMany({
+          where: this.tenantWhere({
+            variant_id: data.variant_id,
+            warehouse_id: data.warehouse_id,
+            quantity: { gte: data.quantity },
+          }),
+          data: { quantity: { decrement: data.quantity } },
+        });
+
+        if (!decremented || decremented.count === 0) {
+          throw new Error("Insufficient inventory");
+        }
       }
 
-      const updatedInventory = await tx.inventory.update({
-        where: { id: inventory.id },
-        data: { quantity: newQuantity },
+      updatedInventory = await (tx as any).inventory.findFirst({
+        where: this.tenantWhere({
+          variant_id: data.variant_id,
+          warehouse_id: data.warehouse_id,
+        }),
+      }) as Inventory | null;
+
+      if (!updatedInventory) {
+        throw new Error("Inventory state invalid");
+      }
+
+      // 4. Update Summary Table
+      await (tx as any).inventorySummary.upsert({
+        where: {
+          organization_id_warehouse_id_variant_id: {
+            organization_id: this.organizationId,
+            warehouse_id: data.warehouse_id,
+            variant_id: data.variant_id,
+          },
+        },
+        update: { total_quantity: updatedInventory.quantity },
+        create: this.tenantData({
+          warehouse_id: data.warehouse_id,
+          variant_id: data.variant_id,
+          total_quantity: updatedInventory.quantity,
+        }),
       });
 
       const ledgerRecord = await tx.inventoryLedger.create({
-        data: {
+        data: this.tenantData({
           variant_id: data.variant_id,
+          warehouse_id: data.warehouse_id,
           action: data.action as LedgerAction,
           quantity: data.quantity,
           reference_type: data.reference_type,
           reference_id: data.reference_id,
-        },
+        }),
       });
 
       return { inventory: updatedInventory, ledger: ledgerRecord };
     };
 
-    return txClient ? execute(txClient) : prisma.$transaction(execute);
+    return txClient ? execute(txClient) : (this.prisma as PrismaClient).$transaction(execute);
   }
 
-  async getLedgerByVariantId(variantId: string): Promise<InventoryLedger[]> {
-    return prisma.inventoryLedger.findMany({
-      where: { variant_id: variantId },
+  async getLedgerByVariantId(variantId: string, warehouseId?: string): Promise<InventoryLedger[]> {
+    const filter: any = { variant_id: variantId };
+    if (warehouseId) filter.warehouse_id = warehouseId;
+
+    return (this.prisma as any).inventoryLedger.findMany({
+      where: this.tenantWhere(filter),
+      include: { warehouse: true },
       orderBy: { created_at: "desc" },
     });
   }
 
-  async count(): Promise<number> {
-    return prisma.inventory.count();
+  async count(search?: string, productId?: string, status?: string, warehouseId?: string): Promise<number> {
+    const and: any[] = [];
+    if (search) {
+      and.push({
+        OR: [
+          { variant: { sku: { contains: search, mode: "insensitive" } } },
+          { variant: { product: { name: { contains: search, mode: "insensitive" } } } },
+        ],
+      });
+    }
+    if (productId && productId !== "all") {
+      and.push({ variant: { product_id: productId } });
+    }
+    if (warehouseId && warehouseId !== "all") {
+      and.push({ warehouse_id: warehouseId });
+    }
+    if (status && status !== "all") {
+      if (status === "out_of_stock") and.push({ total_quantity: 0 });
+      else if (status === "low_stock") and.push({ total_quantity: { gt: 0, lt: 10 } });
+      else if (status === "in_stock") and.push({ total_quantity: { gte: 10 } });
+    }
+    
+    const where = this.warehouseWhere(and.length > 0 ? { AND: and } : {});
+    return (this.prisma as any).inventorySummary.count({ where });
   }
 }

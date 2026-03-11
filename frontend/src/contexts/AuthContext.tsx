@@ -1,10 +1,13 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { useWarehouseStore } from "../store/warehouseStore";
 
 
 interface User {
   id: string;
   name: string;
   email: string;
+  role: "ADMIN" | "MANAGER" | "STAFF";
+  organization_id?: string | null;
 }
 
 interface AuthContextType {
@@ -29,11 +32,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const storedToken = localStorage.getItem("wareflow_token");
     const storedUser = localStorage.getItem("wareflow_user");
-    if (storedToken && storedUser) {
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser));
+    if (!storedToken || !storedUser) {
+      setIsLoading(false);
+      return;
     }
-    setIsLoading(false);
+
+    const validateSession = async () => {
+      try {
+        const parsedUser = JSON.parse(storedUser);
+        const res = await fetch(`${API_BASE}/auth/me`, {
+          headers: { Authorization: `Bearer ${storedToken}` },
+        });
+        if (!res.ok) {
+          throw new Error("Session validation failed");
+        }
+        setToken(storedToken);
+        setUser(parsedUser);
+      } catch {
+        localStorage.removeItem("wareflow_token");
+        localStorage.removeItem("wareflow_user");
+        setToken(null);
+        setUser(null);
+        useWarehouseStore.getState().clearWarehouses();
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    validateSession();
   }, []);
 
   const login = async (email: string, password: string) => {
@@ -69,6 +95,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("wareflow_user");
     setToken(null);
     setUser(null);
+    useWarehouseStore.getState().clearWarehouses();
   };
 
   return (

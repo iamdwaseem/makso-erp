@@ -1,89 +1,102 @@
 import { Request, Response } from "express";
 import { VariantService } from "../services/variant.service.js";
 import { variantSchema } from "../validators/variant.validator.js";
+import { BaseController } from "./BaseController.js";
 
-const variantService = new VariantService();
+export class VariantController extends BaseController {
+  private getService(req: Request): VariantService {
+    const ctx = this.getServiceContext(req);
+    return new VariantService(
+      ctx.organizationId,
+      ctx.userId,
+      ctx.userRole,
+      ctx.allowedWarehouseIds
+    );
+  }
 
-export class VariantController {
-  async getAllVariants(req: Request, res: Response) {
+  getAllVariants = async (req: Request, res: Response) => {
     try {
-      const variants = await variantService.getAllVariants();
-      return res.status(200).json(variants);
+      const { page, limit, search } = this.getPagination(req);
+
+      if (search !== undefined) {
+        const q = search.trim();
+        if (!q || q.length < 2) {
+          return this.success(res, { data: [], meta: { total: 0, page, limit, totalPages: 0 } });
+        }
+      }
+
+      const service = this.getService(req);
+      const result = await service.getAllVariants({ page, limit, search });
+      return this.success(res, result);
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return this.handleError(res, error);
     }
   }
 
-  async getVariantById(req: Request, res: Response) {
+  getVariantById = async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
-      const variant = await variantService.getVariantById(id);
-      return res.status(200).json(variant);
+      const service = this.getService(req);
+      const variant = await service.getVariantById(id);
+      return this.success(res, variant);
     } catch (error: any) {
-      const status = error.message === "Variant not found" ? 404 : 500;
-      return res.status(status).json({ error: error.message });
+      return this.handleError(res, error, "Variant not found");
     }
   }
 
-  async getVariantsByProductId(req: Request, res: Response) {
+  getVariantsByProductId = async (req: Request, res: Response) => {
     try {
       const productId = req.params.id as string;
-      const variants = await variantService.getVariantsByProductId(productId);
-      return res.status(200).json(variants);
+      const service = this.getService(req);
+      const variants = await service.getVariantsByProductId(productId);
+      return this.success(res, variants);
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return this.handleError(res, error, "Product not found");
     }
   }
 
-  async createVariant(req: Request, res: Response) {
+  getVariantBySku = async (req: Request, res: Response) => {
     try {
-      const validatedData = variantSchema.parse(req.body);
-      const variant = await variantService.createVariant(validatedData);
-      return res.status(201).json(variant);
+      const sku = req.params.sku as string;
+      const service = this.getService(req);
+      const variant = await service.getVariantBySku(sku);
+      return this.success(res, variant);
     } catch (error: any) {
-      if (error.name === "ZodError") {
-        return res.status(400).json({ errors: error.errors });
-      }
-      if (error.message === "SKU already exists") {
-        return res.status(409).json({ error: error.message });
-      }
-      return res.status(500).json({ error: error.message });
+      return this.handleError(res, error, "Variant not found");
     }
   }
 
-  async updateVariant(req: Request, res: Response) {
+  createVariant = async (req: Request, res: Response) => {
     try {
-      const id = req.params.id as string;
-      const validatedData = variantSchema.partial().parse(req.body);
-      
-      // Prevent updating product_id
-      if (validatedData.product_id) {
-          delete validatedData.product_id;
-      }
-
-      const variant = await variantService.updateVariant(id, validatedData);
-      return res.status(200).json(variant);
+      const validatedData = variantSchema.parse(this.getBody(req));
+      const service = this.getService(req);
+      const variant = await service.createVariant(validatedData);
+      return this.success(res, variant, 201);
     } catch (error: any) {
-      if (error.name === "ZodError") {
-        return res.status(400).json({ errors: error.errors });
-      }
-      if (error.message === "SKU already exists") {
-        return res.status(409).json({ error: error.message });
-      }
-      const status = error.message === "Variant not found" ? 404 : 500;
-      return res.status(status).json({ error: error.message });
+      return this.handleError(res, error);
     }
   }
 
-  async deleteVariant(req: Request, res: Response) {
+  updateVariant = async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
-      await variantService.deleteVariant(id);
+      const validatedData = variantSchema.partial().parse(this.getBody(req));
+      const service = this.getService(req);
+      const variant = await service.updateVariant(id, validatedData);
+      return this.success(res, variant);
+    } catch (error: any) {
+      return this.handleError(res, error, "Variant not found");
+    }
+  }
+
+  deleteVariant = async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id as string;
+      const service = this.getService(req);
+      await service.deleteVariant(id);
       return res.status(204).send();
     } catch (error: any) {
-      if (error.message === "Variant not found") return res.status(404).json({ error: error.message });
-      if (error.message?.startsWith("Cannot delete")) return res.status(400).json({ error: error.message });
-      return res.status(500).json({ error: error.message });
+      return this.handleError(res, error, "Variant not found");
     }
   }
 }

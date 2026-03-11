@@ -1,18 +1,18 @@
 import { ScanRepository } from "../repositories/scan.repository.js";
 import { VariantRepository } from "../repositories/variant.repository.js";
 import { ScanInput } from "../validators/scan.validator.js";
-
-const scanRepository = new ScanRepository();
-const variantRepository = new VariantRepository();
+import { PrismaClient, Prisma } from "@prisma/client";
 
 export class ScanService {
+  private scanRepo: ScanRepository;
+  private variantRepo: VariantRepository;
+
+  constructor(prisma: PrismaClient | Prisma.TransactionClient, organizationId: string) {
+    this.scanRepo = new ScanRepository(prisma, organizationId);
+    this.variantRepo = new VariantRepository(prisma, organizationId);
+  }
+
   async processScan(data: ScanInput) {
-    const variant = await variantRepository.findBySku(data.sku);
-
-    if (!variant) {
-      throw new Error("Variant not found for the given SKU");
-    }
-
-    return scanRepository.processScan(data);
+    return this.scanRepo.processScan(data);
   }
 }

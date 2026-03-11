@@ -1,15 +1,25 @@
 import { SupplierRepository } from "../repositories/supplier.repository.js";
 import { SupplierInput } from "../validators/supplier.validator.js";
-
-const supplierRepository = new SupplierRepository();
+import prisma from "../lib/prisma.js";
 
 export class SupplierService {
-  async getAllSuppliers() {
-    return supplierRepository.findAll();
+  private supplierRepository: SupplierRepository;
+
+  constructor(
+    organizationId: string,
+    userId?: string,
+    userRole?: string,
+    allowedWarehouseIds: string[] = []
+  ) {
+    this.supplierRepository = new SupplierRepository(prisma as any, organizationId, userId, userRole, allowedWarehouseIds);
+  }
+
+  async getAllSuppliers(opts?: { page?: number; limit?: number; search?: string }) {
+    return this.supplierRepository.findAll(opts);
   }
 
   async getSupplierById(id: string) {
-    const supplier = await supplierRepository.findById(id);
+    const supplier = await this.supplierRepository.findById(id);
     if (!supplier) {
       throw new Error("Supplier not found");
     }
@@ -17,16 +27,16 @@ export class SupplierService {
   }
 
   async createSupplier(data: SupplierInput) {
-    return supplierRepository.create(data);
+    return this.supplierRepository.create(data);
   }
 
   async updateSupplier(id: string, data: Partial<SupplierInput>) {
     await this.getSupplierById(id); // Check existence
-    return supplierRepository.update(id, data);
+    return this.supplierRepository.update(id, data);
   }
 
   async deleteSupplier(id: string) {
     await this.getSupplierById(id); // Check existence
-    return supplierRepository.delete(id);
+    return this.supplierRepository.delete(id);
   }
 }

@@ -9,12 +9,35 @@ const api = axios.create({
   },
 });
 
-// Attach the JWT token to every outgoing request
+import { useWarehouseStore } from './store/warehouseStore';
+
+// Attach the JWT token and current warehouseId to every outgoing request
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('wareflow_token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+
+  // Inject warehouse scope only for endpoints that are warehouse-aware.
+  const warehouseAwarePathPrefixes = [
+    '/inventory',
+    '/purchases',
+    '/sales',
+    '/scan',
+    '/dashboard',
+    '/history',
+  ];
+  const requestPath = config.url || '';
+  const isWarehouseAware = warehouseAwarePathPrefixes.some((prefix) => requestPath.startsWith(prefix));
+
+  const warehouseId = useWarehouseStore.getState().currentWarehouseId;
+  if (isWarehouseAware && warehouseId && warehouseId !== 'all') {
+    config.params = {
+      ...config.params,
+      warehouseId,
+    };
+  }
+
   return config;
 });
 
@@ -22,7 +45,14 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const status = error.response?.status;
+    const message = String(error.response?.data?.error || "").toLowerCase();
+    const isAuthStateError =
+      status === 401 ||
+      (status === 403 && message.includes("tenant mismatch")) ||
+      (status === 403 && message.includes("organization context mismatch"));
+
+    if (isAuthStateError) {
       localStorage.removeItem('wareflow_token');
       localStorage.removeItem('wareflow_user');
       window.location.href = '/login';

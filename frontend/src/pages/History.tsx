@@ -1,150 +1,211 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { useWarehouseStore } from "../store/warehouseStore";
+import { useApi } from "../hooks/useApi";
 import api from "../api";
 
-type PeriodFilter = "day" | "week" | "month" | "year" | "all";
-
-function startOf(period: PeriodFilter): Date | null {
-  const now = new Date();
-  if (period === "day") return new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (period === "week") {
-    const d = new Date(now); d.setDate(d.getDate() - d.getDay()); d.setHours(0,0,0,0); return d;
-  }
-  if (period === "month") return new Date(now.getFullYear(), now.getMonth(), 1);
-  if (period === "year")  return new Date(now.getFullYear(), 0, 1);
-  return null;
-}
+type PeriodFilter = "day" | "week" | "month" | "year" | "all" | "custom";
 
 export function History() {
-  const [purchases, setPurchases] = useState<any[]>([]);
-  const [sales, setSales]         = useState<any[]>([]);
-  const [typeTab, setTypeTab]     = useState<"all" | "entry" | "exit">("all");
-  const [period, setPeriod]       = useState<PeriodFilter>("all");
+  const [page, setPage] = useState(1);
+  const limit = 50;
+  const [typeTab, setTypeTab] = useState<"all" | "entry" | "exit">("all");
+  const [period, setPeriod] = useState<PeriodFilter>("all");
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
+  const [exporting, setExporting] = useState<"csv" | "pdf" | null>(null);
+  const [exportNotice, setExportNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const currentWarehouseId = useWarehouseStore(state => state.currentWarehouseId);
+
+  const historyParams: Record<string, any> = {
+    page,
+    limit,
+    type: typeTab === "all" ? undefined : typeTab,
+    period,
+    startDate: period === "custom" && customStartDate ? customStartDate : undefined,
+    endDate: period === "custom" && customEndDate ? customEndDate : undefined,
+  };
+
+  const { data: historyData, meta: historyMeta, loading } = useApi<any[]>("/history", {
+    params: historyParams,
+    dependencies: [page, typeTab, period, customStartDate, customEndDate, currentWarehouseId]
+  });
+
+  const allEntries = historyData || [];
+  const total = historyMeta?.total || 0;
 
   useEffect(() => {
-    api.get("/purchases").then(r => setPurchases(r.data)).catch(console.error);
-    api.get("/sales").then(r => setSales(r.data)).catch(console.error);
-  }, []);
+    setPage(1);
+  }, [typeTab, period, customStartDate, customEndDate, currentWarehouseId]);
 
-  const allEntries = useMemo(() => [
-    ...purchases.map(p => ({ ...p, type: "entry" as const, date: p.purchase_date || p.created_at })),
-    ...sales.map(s     => ({ ...s, type: "exit"  as const, date: s.sale_date    || s.created_at })),
-  ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()), [purchases, sales]);
-
-  const filtered = useMemo(() => {
-    const cutoff = startOf(period);
-    return allEntries.filter(e => {
-      if (typeTab !== "all" && e.type !== typeTab) return false;
-      if (cutoff && new Date(e.date) < cutoff) return false;
-      return true;
-    });
-  }, [allEntries, typeTab, period]);
-
-  // ── Stats for the current view ───────────────────────────────────────────
-  const totalIn  = filtered.filter(e => e.type === "entry").reduce((s, e) => s + (e.items?.reduce((ss: number, i: any) => ss + i.quantity, 0) || 0), 0);
-  const totalOut = filtered.filter(e => e.type === "exit" ).reduce((s, e) => s + (e.items?.reduce((ss: number, i: any) => ss + i.quantity, 0) || 0), 0);
-
-  // ── CSV export ───────────────────────────────────────────────────────────
-  const exportCsv = () => {
-    const rows: string[][] = [["Type", "Date", "Invoice #", "Party", "Product", "Variant", "SKU", "Qty"]];
-    filtered.forEach(entry => {
-      const isEntry = entry.type === "entry";
-      const party = isEntry ? entry.supplier?.name : entry.customer?.name;
-      entry.items?.forEach((item: any) => {
-        rows.push([
-          isEntry ? "Entry" : "Exit",
-          new Date(entry.date).toLocaleString(),
-          entry.invoice_number || "",
-          party || "",
-          item.variant?.product?.name || "",
-          item.variant?.color || "",
-          item.variant?.sku || "",
-          String(item.quantity),
-        ]);
+  const triggerFileDownload = async (blob: Blob, fileName: string) => {
+    const anyWindow = window as any;
+    if ("showSaveFilePicker" in window) {
+      const pickerHandle = await anyWindow.showSaveFilePicker({
+        suggestedName: fileName,
+        types: [
+          {
+            description: "Export file",
+            accept: { [blob.type || "application/octet-stream"]: [`.${fileName.split(".").pop() || "bin"}`] }
+          }
+        ]
       });
-    });
-    const csv = rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const writable = await pickerHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return;
+    }
+
+    if (typeof anyWindow.navigator?.msSaveOrOpenBlob === "function") {
+      anyWindow.navigator.msSaveOrOpenBlob(blob, fileName);
+      return;
+    }
+
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url;
-    a.download = `wareflow_history_${period}_${Date.now()}.csv`;
-    a.click(); URL.revokeObjectURL(url);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    a.rel = "noopener";
+    a.target = "_blank";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const getExportEntries = async () => {
+    const type = typeTab === "all" ? undefined : typeTab;
+    if (period === "custom" && (!customStartDate || !customEndDate)) {
+      throw new Error("Select both start and end date for custom range.");
+    }
+    const limitForExport = 500;
+    let exportPage = 1;
+    let totalPages = 1;
+    const rows: any[] = [];
+
+    do {
+      const res = await api.get("/history", {
+        params: {
+          page: exportPage,
+          limit: limitForExport,
+          type,
+          period,
+          startDate: period === "custom" ? customStartDate : undefined,
+          endDate: period === "custom" ? customEndDate : undefined,
+        },
+      });
+
+      const chunk = res.data?.data || [];
+      const meta = res.data?.meta || {};
+      rows.push(...chunk);
+      totalPages = Number(meta.totalPages || 1);
+      exportPage += 1;
+    } while (exportPage <= totalPages);
+
+    return rows;
+  };
+
+  // ── CSV export (Now uses current page data) ────────────────────────────────
+  const exportCsv = async () => {
+    try {
+      setExportNotice(null);
+      setExporting("csv");
+      const exportEntries = await getExportEntries();
+      if (!exportEntries.length) {
+        setExportNotice({ type: "error", text: "No history records available for CSV export." });
+        return;
+      }
+
+      const rows: string[][] = [["Type", "Date", "Invoice #", "Party", "Product", "Variant", "SKU", "Qty"]];
+      exportEntries.forEach(entry => {
+        const isEntry = entry.type === "entry";
+        const party = isEntry ? entry.supplier?.name : entry.customer?.name;
+        entry.items?.forEach((item: any) => {
+          rows.push([
+            isEntry ? "Entry" : "Exit",
+            new Date(entry.date).toLocaleString(),
+            entry.invoiceNumber || "",
+            party || "",
+            item.variant?.product?.name || "",
+            item.variant?.color || "",
+            item.variant?.sku || "",
+            String(item.quantity),
+          ]);
+        });
+      });
+      const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+      const fileName = `wareflow_history_${period}_${Date.now()}.csv`;
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      await triggerFileDownload(blob, fileName);
+      setExportNotice({ type: "success", text: `CSV exported successfully (${exportEntries.length} records).` });
+    } catch (err: any) {
+      setExportNotice({ type: "error", text: err?.message || "CSV export failed. Please try again." });
+    } finally {
+      setExporting(null);
+    }
   };
 
   // ── PDF export ───────────────────────────────────────────────────────────
-  const exportPdf = () => {
-    const doc = new jsPDF();
-    const periodLabel = period === "all" ? "All Time" :
-      period === "day" ? "Today" : period === "week" ? "This Week" :
-      period === "month" ? "This Month" : "This Year";
+  const exportPdf = async () => {
+    try {
+      setExportNotice(null);
+      setExporting("pdf");
+      const exportEntries = await getExportEntries();
+      if (!exportEntries.length) {
+        setExportNotice({ type: "error", text: "No history records available for PDF export." });
+        return;
+      }
+      const doc = new jsPDF();
 
-    doc.setFontSize(18); doc.setFont("helvetica", "bold");
-    doc.text("WareFlow — Transaction History", 14, 18);
-    doc.setFontSize(10); doc.setFont("helvetica", "normal");
-    doc.setTextColor(120);
-    doc.text(`Period: ${periodLabel}   |   Generated: ${new Date().toLocaleString()}`, 14, 26);
-    doc.setTextColor(0);
+      doc.setFontSize(18); doc.setFont("helvetica", "bold");
+      doc.text("WareFlow — Transaction History", 14, 18);
+      doc.setFontSize(10); doc.setFont("helvetica", "normal");
+      doc.setTextColor(120);
+      doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 26);
+      doc.setTextColor(0);
 
-    const tableRows: any[] = [];
-    filtered.forEach(entry => {
-      const isEntry = entry.type === "entry";
-      const party = isEntry ? entry.supplier?.name : entry.customer?.name;
-      entry.items?.forEach((item: any) => {
-        tableRows.push([
-          isEntry ? "Entry" : "Exit",
-          new Date(entry.date).toLocaleDateString(),
-          entry.invoice_number || "—",
-          party || "—",
-          item.variant?.product?.name || "—",
-          item.variant?.color || "—",
-          item.variant?.sku || "—",
-          item.quantity,
-        ]);
+      const tableRows: any[] = [];
+      exportEntries.forEach(entry => {
+        const isEntry = entry.type === "entry";
+        const party = isEntry ? entry.supplier?.name : entry.customer?.name;
+        entry.items?.forEach((item: any) => {
+          tableRows.push([
+            isEntry ? "Entry" : "Exit",
+            new Date(entry.date).toLocaleDateString(),
+            entry.invoiceNumber || "—",
+            party || "—",
+            item.variant?.product?.name || "—",
+            item.variant?.color || "—",
+            item.variant?.sku || "—",
+            item.quantity,
+          ]);
+        });
       });
-    });
 
-    autoTable(doc, {
-      startY: 32,
-      head: [["Type", "Date", "Invoice #", "Party", "Product", "Variant", "SKU", "Qty"]],
-      body: tableRows,
-      headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: "bold", fontSize: 9 },
-      bodyStyles: { fontSize: 9 },
-      alternateRowStyles: { fillColor: [246, 248, 255] },
-      columnStyles: { 7: { halign: "right" } },
-    });
+      autoTable(doc, {
+        startY: 32,
+        head: [["Type", "Date", "Invoice #", "Party", "Product", "Variant", "SKU", "Qty"]],
+        body: tableRows,
+        headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: "bold", fontSize: 9 },
+        bodyStyles: { fontSize: 9 },
+        alternateRowStyles: { fillColor: [246, 248, 255] },
+        columnStyles: { 7: { halign: "right" } },
+      });
 
-    doc.save(`wareflow_history_${period}_${Date.now()}.pdf`);
+      const fileName = `wareflow_history_${Date.now()}.pdf`;
+      const blob = doc.output("blob");
+      await triggerFileDownload(blob, fileName);
+      setExportNotice({ type: "success", text: `PDF exported successfully (${exportEntries.length} records).` });
+    } catch (err: any) {
+      setExportNotice({ type: "error", text: err?.message || "PDF export failed. Please try again." });
+    } finally {
+      setExporting(null);
+    }
   };
 
-  // ── Invoice print ────────────────────────────────────────────────────────
-  const printInvoice = () => {
-    const el = document.getElementById("invoice-print-area");
-    if (!el) return;
-    const win = window.open("", "_blank");
-    if (!win) return;
-    win.document.write(`<html><head><title>Invoice</title>
-      <style>
-        body { font-family: 'Segoe UI', sans-serif; padding: 40px; color: #1a1a1a; max-width: 700px; margin: 0 auto; }
-        .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 30px; }
-        .title { font-size: 28px; font-weight: bold; }
-        .meta { text-align: right; font-size: 13px; color: #555; }
-        .party { margin-bottom: 24px; padding: 16px; background: #f8f8f8; border-radius: 8px; }
-        .party-label { font-size: 11px; color: #999; text-transform: uppercase; letter-spacing: 1px; }
-        .party-name { font-size: 18px; font-weight: 600; margin-top: 4px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-        th { background: #f0f0f0; text-align: left; padding: 10px 12px; font-size: 11px; text-transform: uppercase; color: #666; }
-        td { padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; }
-        .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #999; text-align: center; }
-        @media print { body { padding: 20px; } }
-      </style>
-    </head><body>${el.innerHTML}
-    <div class="footer">WareFlow — Generated ${new Date().toLocaleString()}</div>
-    <script>window.print();</script></body></html>`);
-  };
-
-  const periodLabels: Record<PeriodFilter, string> = { day: "Today", week: "This Week", month: "This Month", year: "This Year", all: "All Time" };
+  // const periodLabels: Record<PeriodFilter, string> = { day: "Today", week: "This Week", month: "This Month", year: "This Year", all: "All Time" };
 
   return (
     <div className="space-y-4">
@@ -157,7 +218,6 @@ export function History() {
         const partyPhone   = isEntry ? inv.supplier?.phone   : inv.customer?.phone;
         const partyEmail   = isEntry ? inv.supplier?.email   : inv.customer?.email;
         const partyAddress = isEntry ? inv.supplier?.address : inv.customer?.address;
-        const totalUnits   = inv.items?.reduce((s: number, i: any) => s + i.quantity, 0) || 0;
 
         return (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
@@ -175,7 +235,7 @@ export function History() {
                     </div>
                     <div className="text-right">
                       <p className={`text-sm font-mono font-bold px-3 py-1.5 rounded-lg inline-block ${isEntry ? "bg-blue-50 text-blue-700" : "bg-green-50 text-green-700"}`}>
-                        {inv.invoice_number || "—"}
+                        {inv.invoiceNumber || "—"}
                       </p>
                       <p className="text-xs text-gray-400 mt-2">{new Date(inv.date).toLocaleString()}</p>
                     </div>
@@ -219,26 +279,13 @@ export function History() {
                           </td>
                         </tr>
                       ))}
-                      <tr className={isEntry ? "bg-green-50" : "bg-orange-50"}>
-                        <td colSpan={4} className="py-3 px-3 text-sm font-bold text-gray-900 text-right">Total Units</td>
-                        <td className={`py-3 px-3 text-sm text-right font-bold ${isEntry ? "text-green-700" : "text-orange-600"}`}>
-                          {isEntry ? "+" : "-"}{totalUnits}
-                        </td>
-                      </tr>
                     </tbody>
                   </table>
                 </div>
-
-                <div className="px-6 pb-4">
-                  <p className="text-xs text-gray-400">Transaction ID: <span className="font-mono">{inv.id}</span></p>
-                </div>
               </div>
-
               <div className="flex gap-3 p-5 border-t border-gray-100 bg-gray-50 rounded-b-2xl">
                 <button onClick={() => setSelectedInvoice(null)}
                   className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-xl hover:bg-gray-300 text-sm font-medium">Close</button>
-                <button onClick={printInvoice}
-                  className="flex-1 bg-blue-600 text-white py-3 rounded-xl hover:bg-blue-700 text-sm font-bold">🖨️ Print Invoice</button>
               </div>
             </div>
           </div>
@@ -247,141 +294,115 @@ export function History() {
 
       {/* ── Toolbar ───────────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Type tabs */}
-          <div className="flex gap-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             {([
               { key: "all",   label: "All" },
               { key: "entry", label: "📥 Entries" },
               { key: "exit",  label: "📤 Exits" },
             ] as const).map(t => (
-              <button key={t.key} onClick={() => setTypeTab(t.key)}
+              <button key={t.key} onClick={() => { setTypeTab(t.key); setPage(1); }}
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${typeTab === t.key ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
                 {t.label}
               </button>
             ))}
+
+            <select
+              value={period}
+              onChange={(e) => setPeriod(e.target.value as PeriodFilter)}
+              className="px-3 py-1.5 rounded-lg text-sm border border-gray-200 bg-white text-gray-700"
+            >
+              <option value="all">All Time</option>
+              <option value="day">Today</option>
+              <option value="week">This Week</option>
+              <option value="month">This Month</option>
+              <option value="year">This Year</option>
+              <option value="custom">Custom Range</option>
+            </select>
+            {period === "custom" && (
+              <>
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  className="px-3 py-1.5 rounded-lg text-sm border border-gray-200 bg-white text-gray-700"
+                />
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  className="px-3 py-1.5 rounded-lg text-sm border border-gray-200 bg-white text-gray-700"
+                />
+              </>
+            )}
           </div>
 
-          <div className="w-px h-6 bg-gray-200 mx-1" />
-
-          {/* Period tabs */}
-          <div className="flex gap-1.5">
-            {(["day","week","month","year","all"] as PeriodFilter[]).map(p => (
-              <button key={p} onClick={() => setPeriod(p)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${period === p ? "bg-violet-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
-                {periodLabels[p]}
-              </button>
-            ))}
-          </div>
-
-          {/* Export buttons — pushed right */}
-          <div className="ml-auto flex gap-2">
-            <button onClick={exportCsv} disabled={filtered.length === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 disabled:opacity-40 transition-colors">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-              CSV
-            </button>
-            <button onClick={exportPdf} disabled={filtered.length === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 disabled:opacity-40 transition-colors">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-              PDF
-            </button>
+          <div className="flex gap-2">
+            <button onClick={exportCsv} disabled={loading || total === 0 || exporting !== null || (period === "custom" && (!customStartDate || !customEndDate))}
+              className="px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg">CSV</button>
+            <button onClick={exportPdf} disabled={loading || total === 0 || exporting !== null || (period === "custom" && (!customStartDate || !customEndDate))}
+              className="px-3 py-1.5 text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg">PDF</button>
           </div>
         </div>
+        {period === "custom" && (!customStartDate || !customEndDate) && (
+          <div className="mt-3 text-xs font-medium px-3 py-2 rounded-lg border text-amber-700 bg-amber-50 border-amber-200">
+            Select both start and end dates to apply custom filtering.
+          </div>
+        )}
+        {exportNotice && (
+          <div className={`mt-3 text-xs font-medium px-3 py-2 rounded-lg border ${
+            exportNotice.type === "success"
+              ? "text-emerald-700 bg-emerald-50 border-emerald-200"
+              : "text-red-700 bg-red-50 border-red-200"
+          }`}>
+            {exportNotice.text}
+          </div>
+        )}
       </div>
 
-      {/* ── Summary chips ─────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-3 gap-3">
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3 flex items-center gap-3">
-          <span className="text-xl">📋</span>
-          <div>
-            <div className="text-lg font-bold text-gray-900">{filtered.length}</div>
-            <div className="text-xs text-gray-400">{periodLabels[period]} transactions</div>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl border border-emerald-100 shadow-sm px-4 py-3 flex items-center gap-3">
-          <span className="text-xl">📥</span>
-          <div>
-            <div className="text-lg font-bold text-emerald-700">+{totalIn}</div>
-            <div className="text-xs text-gray-400">units received</div>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl border border-orange-100 shadow-sm px-4 py-3 flex items-center gap-3">
-          <span className="text-xl">📤</span>
-          <div>
-            <div className="text-lg font-bold text-orange-600">−{totalOut}</div>
-            <div className="text-xs text-gray-400">units sold</div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Records ───────────────────────────────────────────────────────── */}
-      {filtered.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-100 p-10 text-center text-gray-400 text-sm">
-          No records for <span className="font-medium">{periodLabels[period]}</span>.
-        </div>
+      {loading ? (
+        <div className="py-20 text-center text-gray-400">Loading history...</div>
+      ) : allEntries.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-100 p-10 text-center text-gray-400 text-sm">No records found.</div>
       ) : (
         <div className="space-y-3">
-          {filtered.map(entry => {
-            const isEntry   = entry.type === "entry";
+          {allEntries.map(entry => {
+            const isEntry = entry.type === "entry";
             const totalUnits = entry.items?.reduce((sum: number, i: any) => sum + i.quantity, 0) || 0;
-            const partyName  = isEntry ? entry.supplier?.name : entry.customer?.name;
-            const partyPhone = isEntry ? entry.supplier?.phone : entry.customer?.phone;
+            const partyName = isEntry ? entry.supplier?.name : entry.customer?.name;
 
             return (
-              <div key={entry.id}
-                onClick={() => setSelectedInvoice(entry)}
+              <div key={`${entry.type}-${entry.id}`} onClick={() => setSelectedInvoice(entry)}
                 className="bg-white rounded-xl border border-gray-100 overflow-hidden cursor-pointer hover:border-blue-200 hover:shadow-md transition-all">
-                <div className="p-5 border-b border-gray-100">
-                  <div className="flex justify-between items-start">
+                <div className="p-5 border-b border-gray-100 flex justify-between items-center">
+                  <div className="flex items-center gap-3">
+                    <span className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold ${isEntry ? "bg-green-500" : "bg-orange-500"}`}>
+                      {isEntry ? "↓" : "↑"}
+                    </span>
                     <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold ${isEntry ? "bg-green-500" : "bg-orange-500"}`}>
-                          {isEntry ? "↓" : "↑"}
-                        </span>
-                        <div>
-                          <p className="text-sm font-semibold text-gray-900">
-                            {isEntry ? "Received from" : "Sold to"}{" "}
-                            <span className={isEntry ? "text-blue-700" : "text-green-700"}>{partyName || "Unknown"}</span>
-                          </p>
-                          {partyPhone && <p className="text-xs text-gray-400">📞 {partyPhone}</p>}
-                        </div>
-                      </div>
-                      <p className="text-xs text-gray-400 ml-9">{new Date(entry.date).toLocaleString()}</p>
-                    </div>
-                    <div className="text-right">
-                      {entry.invoice_number && (
-                        <p className={`text-xs px-2 py-1 rounded font-mono ${isEntry ? "bg-blue-50 text-blue-700" : "bg-green-50 text-green-700"}`}>
-                          {entry.invoice_number}
-                        </p>
-                      )}
-                      <p className={`text-sm font-bold mt-1 ${isEntry ? "text-green-700" : "text-orange-600"}`}>
-                        {isEntry ? "+" : "-"}{totalUnits} units
-                      </p>
-                      <p className="text-xs text-blue-500 mt-1">View details →</p>
+                      <p className="text-sm font-semibold text-gray-900">{isEntry ? "Received from" : "Sold to"} <span className="text-blue-700">{partyName || "Unknown"}</span></p>
+                      <p className="text-xs text-gray-400">{new Date(entry.date).toLocaleString()}</p>
                     </div>
                   </div>
-                </div>
-                <div className="p-4 bg-gray-50/50">
-                  {entry.items?.map((item: any) => (
-                    <div key={item.id} className="flex justify-between text-sm py-0.5">
-                      <span className="text-gray-700">
-                        {item.variant?.product?.name} · {item.variant?.color}{" "}
-                        <span className="text-gray-400 font-mono text-xs">({item.variant?.sku})</span>
-                      </span>
-                      <span className={`font-bold ${isEntry ? "text-green-700" : "text-orange-600"}`}>
-                        {isEntry ? "+" : "-"}{item.quantity}
-                      </span>
-                    </div>
-                  ))}
+                  <div className="text-right">
+                    <p className={`text-sm font-bold ${isEntry ? "text-green-700" : "text-orange-600"}`}>{isEntry ? "+" : "-"}{totalUnits} units</p>
+                    <p className="text-[10px] font-mono text-gray-400 uppercase tracking-tighter">{entry.invoiceNumber || "No Invoice"}</p>
+                  </div>
                 </div>
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ── Pagination ────────────────────────────────────────────────────── */}
+      {!loading && total > limit && (
+        <div className="flex items-center justify-between border-t border-gray-100 pt-4">
+          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
+            className="px-4 py-2 border rounded-lg text-sm disabled:opacity-50">← Previous</button>
+          <span className="text-sm text-gray-500">Page {page}</span>
+          <button onClick={() => setPage(p => p + 1)} disabled={allEntries.length < limit}
+            className="px-4 py-2 border rounded-lg text-sm disabled:opacity-50">Next →</button>
         </div>
       )}
     </div>

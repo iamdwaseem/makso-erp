@@ -1,61 +1,11 @@
-import { useEffect, useRef, useState } from "react";
-import { QRCodeSVG } from "qrcode.react";
+import { useState } from "react";
+import { QRVariantLabel } from "../components/labels/QRVariantLabel";
 import api from "../api";
+import { useWarehouseStore } from "../store/warehouseStore";
+import { useScanner } from "../hooks/useScanner";
+import { SearchCombobox } from "../components/SearchCombobox";
 
-// ── Autocomplete combobox ───────────────────────────────────────────────────
-interface ComboboxProps {
-  items: { id: string; label: string }[];
-  value: string;
-  onChange: (id: string) => void;
-  placeholder?: string;
-  accentClass?: string;
-}
-function Combobox({ items, value, onChange, placeholder = "Search...", accentClass = "focus:border-blue-500" }: ComboboxProps) {
-  const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const selectedLabel = items.find(i => i.id === value)?.label ?? "";
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false); setQuery("");
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  const filtered = query.trim()
-    ? items.filter(i => i.label.toLowerCase().includes(query.toLowerCase()))
-    : items;
-
-  return (
-    <div ref={ref} className="relative">
-      <input
-        type="text"
-        value={open ? query : selectedLabel}
-        onChange={e => { setQuery(e.target.value); setOpen(true); onChange(""); }}
-        onFocus={() => { setQuery(""); setOpen(true); }}
-        placeholder={placeholder}
-        className={`w-full border border-gray-300 rounded-lg p-2.5 text-sm bg-white outline-none ${accentClass}`}
-      />
-      {open && (
-        <ul className="absolute z-30 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
-          {filtered.length === 0 ? (
-            <li className="px-3 py-2 text-sm text-gray-400">No results{query ? ` for "${query}"` : ""}</li>
-          ) : filtered.map(item => (
-            <li key={item.id}
-              onMouseDown={() => { onChange(item.id); setQuery(""); setOpen(false); }}
-              className={`px-3 py-2 text-sm cursor-pointer hover:bg-blue-50 ${item.id === value ? "bg-blue-50 font-medium text-blue-700" : "text-gray-800"}`}>
-              {item.label}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
+// ──────────────────────────────────────────────────────────────────────────────
 // ──────────────────────────────────────────────────────────────────────────────
 
 interface CartItem {
@@ -67,10 +17,6 @@ interface CartItem {
 const makeItem = (): CartItem => ({ id: crypto.randomUUID(), variantId: "", quantity: 1 });
 
 export function StockEntry() {
-  const [variants, setVariants] = useState<any[]>([]);
-  const [suppliers, setSuppliers] = useState<any[]>([]);
-  const [products, setProducts] = useState<any[]>([]);
-
   const [mode, setMode] = useState<"existing" | "new" | "variant">("existing");
 
   // ── Cart (multi-item) ────────────────────────────────────────────────────
@@ -99,15 +45,39 @@ export function StockEntry() {
   const [addVarColor, setAddVarColor] = useState("");
   const [addVarQty, setAddVarQty] = useState(1);
 
-  const [qrSku, setQrSku] = useState<string | null>(null);
+  const [qrLabel, setQrLabel] = useState<{ variantId: string, sku: string, productName: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const fetchAll = () => {
-    api.get("/variants").then(r => setVariants(r.data)).catch(console.error);
-    api.get("/suppliers").then(r => setSuppliers(r.data)).catch(console.error);
-    api.get("/products").then(r => setProducts(r.data)).catch(console.error);
-  };
-  useEffect(() => { fetchAll(); }, []);
+  const currentWarehouseId = useWarehouseStore(state => state.currentWarehouseId);
+
+  useScanner((code) => {
+    if (mode !== "existing") return;
+
+    let apiPath = `/variants/sku/${code}`;
+
+    if (code.startsWith("VAR:")) {
+      const variantId = code.replace("VAR:", "");
+      apiPath = `/variants/${variantId}`;
+    }
+
+    api.get(apiPath).then(res => {
+      const variant = res.data;
+      setCart(prev => {
+        if (prev.length === 1 && !prev[0].variantId) {
+          return [{ ...prev[0], variantId: variant.id, quantity: 1 }];
+        }
+        
+        const existingRow = prev.find(r => r.variantId === variant.id);
+        if (existingRow) {
+          return prev.map(r => r.id === existingRow.id ? { ...r, quantity: r.quantity + 1 } : r);
+        }
+        
+        return [...prev, { id: crypto.randomUUID(), variantId: variant.id, quantity: 1 }];
+      });
+    }).catch(err => {
+      console.error(`Scan lookup failed: ${err.message}`);
+    });
+  });
 
   const getOrCreateSupplier = async (): Promise<string | null> => {
     if (supplierMode === "existing") {
@@ -119,7 +89,6 @@ export function StockEntry() {
       name: newSupplierName, phone: newSupplierPhone,
       ...(newSupplierAddress ? { address: newSupplierAddress } : {}),
     });
-    setSuppliers(prev => [...prev, res.data]);
     return res.data.id;
   };
 
@@ -129,6 +98,7 @@ export function StockEntry() {
 
   // ── Submit: existing stock-in (multi-item) ───────────────────────────────
   const handleExistingStockIn = async () => {
+    if (currentWarehouseId === "all") { alert("Please select a specific warehouse in the header to receive stock."); return; }
     const validItems = cart.filter(r => r.variantId && r.quantity >= 1);
     if (validItems.length === 0) { alert("Add at least one product variant"); return; }
     if (cart.some(r => r.variantId && r.quantity < 1)) { alert("All quantities must be ≥ 1"); return; }
@@ -137,12 +107,12 @@ export function StockEntry() {
       const supplierId = await getOrCreateSupplier();
       if (!supplierId) { setSubmitting(false); return; }
       await api.post("/purchases", {
-        supplier_id: supplierId,
-        items: validItems.map(r => ({ variant_id: r.variantId, quantity: r.quantity })),
+        supplierId: supplierId,
+        warehouseId: currentWarehouseId,
+        items: validItems.map(r => ({ variantId: r.variantId, quantity: r.quantity })),
       });
       setCart([makeItem()]);
       resetSupplier();
-      fetchAll();
       alert(`✓ ${validItems.length} product(s) stocked in successfully!`);
     } catch (err: any) { alert(err.response?.data?.error || err.message); }
     setSubmitting(false);
@@ -150,33 +120,37 @@ export function StockEntry() {
 
   // ── Submit: new product ──────────────────────────────────────────────────
   const handleNewProductStockIn = async () => {
+    if (currentWarehouseId === "all") { alert("Please select a specific warehouse in the header to receive stock."); return; }
     if (!productName || !color) { alert("Fill in all product fields"); return; }
     setSubmitting(true);
     try {
       const supplierId = await getOrCreateSupplier();
       if (!supplierId) { setSubmitting(false); return; }
       const productRes = await api.post("/products", { name: productName });
-      const variantRes = await api.post("/variants", { product_id: productRes.data.id, color });
-      await api.post("/purchases", { supplier_id: supplierId, items: [{ variant_id: variantRes.data.id, quantity: newQty }] });
-      setQrSku(variantRes.data.sku);
+      const variantRes = await api.post("/variants", { productId: productRes.data.id, color });
+      await api.post("/purchases", { supplierId: supplierId, warehouseId: currentWarehouseId, items: [{ variantId: variantRes.data.id, quantity: newQty }] });
+      setQrLabel({ variantId: variantRes.data.id, sku: variantRes.data.sku, productName: productRes.data.name });
       setProductName(""); setColor(""); setNewQty(1);
-      resetSupplier(); fetchAll();
+      resetSupplier();
     } catch (err: any) { alert(err.response?.data?.error || err.message); }
     setSubmitting(false);
   };
 
   // ── Submit: add variant ──────────────────────────────────────────────────
   const handleAddVariantStockIn = async () => {
+    if (currentWarehouseId === "all") { alert("Please select a specific warehouse in the header to receive stock."); return; }
     if (!selectedProduct || !addVarColor) { alert("Fill in all variant fields"); return; }
     setSubmitting(true);
     try {
       const supplierId = await getOrCreateSupplier();
       if (!supplierId) { setSubmitting(false); return; }
-      const variantRes = await api.post("/variants", { product_id: selectedProduct, color: addVarColor });
-      await api.post("/purchases", { supplier_id: supplierId, items: [{ variant_id: variantRes.data.id, quantity: addVarQty }] });
-      setQrSku(variantRes.data.sku);
+      const variantRes = await api.post("/variants", { productId: selectedProduct, color: addVarColor });
+      await api.post("/purchases", { supplierId: supplierId, warehouseId: currentWarehouseId, items: [{ variantId: variantRes.data.id, quantity: addVarQty }] });
+      const productRes = await api.get(`/products/${selectedProduct}`);
+      const pName = productRes.data.name || "Product";
+      setQrLabel({ variantId: variantRes.data.id, sku: variantRes.data.sku, productName: pName });
       setSelectedProduct(""); setAddVarColor(""); setAddVarQty(1);
-      resetSupplier(); fetchAll();
+      resetSupplier();
     } catch (err: any) { alert(err.response?.data?.error || err.message); }
     setSubmitting(false);
   };
@@ -184,16 +158,13 @@ export function StockEntry() {
   const printQr = () => {
     const svg = document.getElementById("qr-print-area");
     if (!svg) return;
+    const title = qrLabel?.sku || "QR";
     const win = window.open("", "_blank");
     if (!win) return;
-    win.document.write(`<html><head><title>QR - ${qrSku}</title>
-      <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:monospace;}p{font-size:18px;margin-top:12px;}</style></head>
-      <body>${svg.outerHTML}<p>${qrSku}</p><script>window.print();window.close();</script></body></html>`);
+    win.document.write(`<html><head><title>QR - ${title}</title>
+      <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;}p{font-size:18px;margin-top:12px;}</style></head>
+      <body>${svg.innerHTML}<script>window.print();window.close();</script></body></html>`);
   };
-
-  const variantItems = variants.map(v => ({ id: v.id, label: `${v.product?.name} — ${v.color} (${v.sku})` }));
-  const supplierItems = suppliers.map(s => ({ id: s.id, label: `${s.name} (${s.phone})` }));
-  const productItems = products.map(p => ({ id: p.id, label: `${p.name} (${p.sku})` }));
 
   // Cart total items
   const cartCount = cart.filter(r => r.variantId).length;
@@ -208,7 +179,7 @@ export function StockEntry() {
         </button>
       </div>
       {supplierMode === "existing" ? (
-        <Combobox items={supplierItems} value={selectedSupplierId} onChange={setSelectedSupplierId}
+        <SearchCombobox endpoint="/suppliers" mapItem={(s: any) => ({ id: s.id, label: `${s.name} (${s.phone})` })} value={selectedSupplierId} onChange={setSelectedSupplierId}
           placeholder="Search supplier..." accentClass="focus:border-blue-500" />
       ) : (
         <div className="space-y-2">
@@ -226,16 +197,17 @@ export function StockEntry() {
   return (
     <div className="space-y-6">
       {/* QR Modal */}
-      {qrSku && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setQrSku(null)}>
+      {qrLabel && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setQrLabel(null)}>
           <div className="bg-white rounded-2xl p-8 shadow-2xl text-center space-y-4" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-gray-800">QR Code Ready</h3>
             <p className="text-sm text-gray-500">Print this and stick it on the product</p>
-            <div id="qr-print-area"><QRCodeSVG value={qrSku} size={200} /></div>
-            <p className="font-mono text-sm text-gray-600 bg-gray-100 px-3 py-1.5 rounded">{qrSku}</p>
-            <div className="flex gap-3 justify-center">
+            <div id="qr-print-area" className="flex justify-center">
+              <QRVariantLabel variantId={qrLabel.variantId} sku={qrLabel.sku} productName={qrLabel.productName} />
+            </div>
+            <div className="flex gap-3 justify-center mt-4">
               <button onClick={printQr} className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm font-medium">🖨️ Print</button>
-              <button onClick={() => setQrSku(null)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 text-sm font-medium">Close</button>
+              <button onClick={() => setQrLabel(null)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 text-sm font-medium">Close</button>
             </div>
           </div>
         </div>
@@ -283,8 +255,9 @@ export function StockEntry() {
 
             {cart.map((row, idx) => (
               <div key={row.id} className="grid grid-cols-[1fr_100px_36px] gap-2 items-center">
-                <Combobox
-                  items={variantItems}
+                <SearchCombobox
+                  endpoint="/variants"
+                  mapItem={(v: any) => ({ id: v.id, label: `${v.product?.name} — ${v.color} (${v.sku})` })}
                   value={row.variantId}
                   onChange={id => setCartItem(row.id, { variantId: id })}
                   placeholder={`Item ${idx + 1}...`}
@@ -335,7 +308,7 @@ export function StockEntry() {
           <div className="space-y-4 max-w-lg">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Product</label>
-              <Combobox items={productItems} value={selectedProduct} onChange={setSelectedProduct}
+              <SearchCombobox endpoint="/products" mapItem={(p: any) => ({ id: p.id, label: `${p.name} (${p.sku})` })} value={selectedProduct} onChange={setSelectedProduct}
                 placeholder="Search product..." accentClass="focus:border-indigo-500" />
             </div>
             <div className="grid grid-cols-2 gap-3">

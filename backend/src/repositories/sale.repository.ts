@@ -1,64 +1,79 @@
-import { PrismaClient, Sale } from "@prisma/client";
+import { PrismaClient, Sale, Prisma } from "@prisma/client";
 import { SaleInput } from "../validators/sale.validator.js";
 import { InventoryRepository } from "./inventory.repository.js";
 import crypto from "crypto";
-
-const prisma = new PrismaClient();
+import { BaseRepository } from "./BaseRepository.js";
 
 function generateInvoiceNumber(prefix: string): string {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const suffix = crypto.randomBytes(2).toString("hex").toUpperCase();
   return `${prefix}-${date}-${suffix}`;
 }
-const inventoryRepository = new InventoryRepository();
 
-export class SaleRepository {
-  /**
-   * Eliminated N+1: previously did one purchaseItem query per sale item.
-   * Now does 2 queries total + one O(n) map build.
-   */
-  async findAll({ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
-    const [sales, allPurchaseItems] = await Promise.all([
-      prisma.sale.findMany({
-        include: {
-          customer: true,
-          items: { include: { variant: { include: { product: true } } } },
-        },
-        orderBy: { created_at: "desc" },
-        skip: offset,
-        take: limit,
-      }),
-      // Fetch all purchaseItems once to resolve supplier per variant
-      prisma.purchaseItem.findMany({
-        include: { purchase: { include: { supplier: true } } },
-        orderBy: { purchase: { created_at: "desc" } },
-      }),
-    ]);
+export class SaleRepository extends BaseRepository {
+  private inventoryRepo: InventoryRepository;
 
-    // variant_id → latest supplier (first occurrence = most recent)
+  constructor(
+    prisma: PrismaClient | Prisma.TransactionClient, 
+    organizationId: string,
+    userId?: string,
+    userRole?: string,
+    allowedWarehouseIds: string[] = []
+  ) {
+    super(prisma, organizationId, userId, userRole, allowedWarehouseIds);
+    this.inventoryRepo = new InventoryRepository(this.prisma, organizationId, userId, userRole, allowedWarehouseIds);
+  }
+
+  async findAll({ page = 1, limit = 50 }: { page?: number; limit?: number } = {}) {
+    const paginated = await this.paginate<any>(
+      (this.prisma as any).sale,
+      this.tenantWhere({}),
+      page,
+      limit,
+      {
+        customer: true,
+        items: { include: { variant: { include: { product: true } } } },
+      },
+      { created_at: "desc" }
+    );
+
+    const sales = paginated.data;
+    const variantIds = Array.from(new Set(sales.flatMap((s: any) => s.items.map((i: any) => i.variant_id))));
+
+    const relevantPurchaseItems = await (this.prisma as any).purchaseItem.findMany({
+      where: this.tenantWhere({ variant_id: { in: variantIds } }),
+      include: { purchase: { include: { supplier: true } } },
+      orderBy: { purchase: { created_at: "desc" } },
+    });
+
     const supplierByVariant = new Map<string, any>();
-    for (const item of allPurchaseItems) {
+    for (const item of relevantPurchaseItems) {
       if (!supplierByVariant.has(item.variant_id)) {
         supplierByVariant.set(item.variant_id, item.purchase?.supplier ?? null);
       }
     }
 
-    return sales.map(sale => ({
-      ...sale,
-      items: sale.items.map(item => ({
-        ...item,
-        supplier: supplierByVariant.get(item.variant_id) ?? null,
-      })),
-    }));
+    return {
+      ...paginated,
+      data: sales.map((sale: any) => ({
+        ...sale,
+        items: sale.items.map((item: any) => ({
+          ...item,
+          supplier: supplierByVariant.get(item.variant_id) ?? null,
+        })),
+      }))
+    };
   }
 
   async count(): Promise<number> {
-    return prisma.sale.count();
+    return (this.prisma as any).sale.count({
+      where: this.tenantWhere({}),
+    });
   }
 
   async findById(id: string): Promise<any | null> {
-    const sale = await prisma.sale.findUnique({
-      where: { id },
+    const sale = await (this.prisma as any).sale.findFirst({
+      where: this.tenantWhere({ id }),
       include: {
         customer: true,
         items: { include: { variant: { include: { product: true } } } },
@@ -66,9 +81,8 @@ export class SaleRepository {
     });
     if (!sale) return null;
 
-    // For single-item view, the extra query is negligible
-    const allPurchaseItems = await prisma.purchaseItem.findMany({
-      where: { variant_id: { in: sale.items.map(i => i.variant_id) } },
+    const allPurchaseItems = await (this.prisma as any).purchaseItem.findMany({
+      where: this.tenantWhere({ variant_id: { in: sale.items.map((i: any) => i.variant_id) } }),
       include: { purchase: { include: { supplier: true } } },
       orderBy: { purchase: { created_at: "desc" } },
     });
@@ -82,7 +96,7 @@ export class SaleRepository {
 
     return {
       ...sale,
-      items: sale.items.map(item => ({
+      items: sale.items.map((item: any) => ({
         ...item,
         supplier: supplierByVariant.get(item.variant_id) ?? null,
       })),
@@ -90,20 +104,29 @@ export class SaleRepository {
   }
 
   async createSale(data: SaleInput): Promise<Sale> {
-    return prisma.$transaction(async (tx) => {
+    const txFunc = async (tx: Prisma.TransactionClient) => {
+      const txInventoryRepo = new InventoryRepository(tx, this.organizationId, this.userId, this.userRole, this.allowedWarehouseIds);
+      
       const sale = await tx.sale.create({
-        data: {
+        data: this.tenantData({
           customer_id: data.customer_id,
           invoice_number: generateInvoiceNumber("SAL"),
-        },
+        }),
       });
 
       for (const item of data.items) {
         await tx.saleItem.create({
-          data: { sale_id: sale.id, variant_id: item.variant_id, quantity: item.quantity },
+          data: this.tenantData({ sale_id: sale.id, variant_id: item.variant_id, quantity: item.quantity }),
         });
-        await inventoryRepository.adjustInventory(
-          { variant_id: item.variant_id, action: "OUT", quantity: item.quantity, reference_type: "SALE", reference_id: sale.id },
+        await txInventoryRepo.adjustInventory(
+          {
+            variant_id: item.variant_id,
+            warehouse_id: data.warehouse_id,
+            action: "OUT",
+            quantity: item.quantity,
+            reference_type: "SALE",
+            reference_id: sale.id
+          },
           tx,
         );
       }
@@ -115,6 +138,12 @@ export class SaleRepository {
           items: { include: { variant: { include: { product: true } } } },
         },
       }) as unknown as Sale;
-    });
+    };
+
+    if ((this.prisma as any).$transaction) {
+      return (this.prisma as PrismaClient).$transaction(txFunc);
+    } else {
+      return txFunc(this.prisma as Prisma.TransactionClient);
+    }
   }
 }

@@ -2,22 +2,34 @@ import { SaleRepository } from "../repositories/sale.repository.js";
 import { CustomerRepository } from "../repositories/customer.repository.js";
 import { VariantRepository } from "../repositories/variant.repository.js";
 import { SaleInput } from "../validators/sale.validator.js";
-
-const saleRepository = new SaleRepository();
-const customerRepository = new CustomerRepository();
-const variantRepository = new VariantRepository();
+import prisma from "../lib/prisma.js";
 
 export class SaleService {
-  async getAllSales(opts?: { limit?: number; offset?: number }) {
-    return saleRepository.findAll(opts);
+  private saleRepository: SaleRepository;
+  private customerRepository: CustomerRepository;
+  private variantRepository: VariantRepository;
+
+  constructor(
+    organizationId: string,
+    userId?: string,
+    userRole?: string,
+    allowedWarehouseIds: string[] = []
+  ) {
+    this.saleRepository = new SaleRepository(prisma as any, organizationId, userId, userRole, allowedWarehouseIds);
+    this.customerRepository = new CustomerRepository(prisma as any, organizationId, userId, userRole, allowedWarehouseIds);
+    this.variantRepository = new VariantRepository(prisma as any, organizationId, userId, userRole, allowedWarehouseIds);
+  }
+
+  async getAllSales(opts?: { page?: number; limit?: number }) {
+    return this.saleRepository.findAll(opts);
   }
 
   async countSales() {
-    return saleRepository.count();
+    return this.saleRepository.count();
   }
 
   async getSaleById(id: string) {
-    const sale = await saleRepository.findById(id);
+    const sale = await this.saleRepository.findById(id);
     if (!sale) {
       throw new Error("Sale not found");
     }
@@ -26,20 +38,20 @@ export class SaleService {
 
   async createSale(data: SaleInput) {
     // Validate customer exists
-    const customer = await customerRepository.findById(data.customer_id);
+    const customer = await this.customerRepository.findById(data.customer_id);
     if (!customer) {
       throw new Error("Customer not found");
     }
 
     // Validate all variants exist
     for (const item of data.items) {
-      const variant = await variantRepository.findById(item.variant_id);
+      const variant = await this.variantRepository.findById(item.variant_id);
       if (!variant) {
         throw new Error(`Variant not found: ${item.variant_id}`);
       }
     }
 
     // Orchestrate sale transaction deeply passing through to DB layer cleanly
-    return saleRepository.createSale(data);
+    return this.saleRepository.createSale(data);
   }
 }

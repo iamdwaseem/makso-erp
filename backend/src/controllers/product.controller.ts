@@ -1,73 +1,80 @@
 import { Request, Response } from "express";
 import { ProductService } from "../services/product.service.js";
 import { productSchema } from "../validators/product.validator.js";
+import { BaseController } from "./BaseController.js";
 
-const productService = new ProductService();
+export class ProductController extends BaseController {
+  private getService(req: Request): ProductService {
+    const ctx = this.getServiceContext(req);
+    return new ProductService(
+      ctx.organizationId,
+      ctx.userId,
+      ctx.userRole,
+      ctx.allowedWarehouseIds
+    );
+  }
 
-export class ProductController {
-  async getAllProducts(req: Request, res: Response) {
+  getAllProducts = async (req: Request, res: Response) => {
     try {
-      const products = await productService.getAllProducts();
-      return res.status(200).json(products);
+      const { page, limit, search } = this.getPagination(req);
+
+      if (search !== undefined) {
+        const q = search.trim();
+        if (!q || q.length < 2) {
+          return this.success(res, { data: [], meta: { total: 0, page, limit, totalPages: 0 } });
+        }
+      }
+
+      const service = this.getService(req);
+      const result = await service.getAllProducts({ page, limit, search });
+      return this.success(res, result);
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return this.handleError(res, error);
     }
   }
 
-  async getProductById(req: Request, res: Response) {
+  getProductById = async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
-      const product = await productService.getProductById(id);
-      return res.status(200).json(product);
+      const service = this.getService(req);
+      const product = await service.getProductById(id);
+      return this.success(res, product);
     } catch (error: any) {
-      const status = error.message === "Product not found" ? 404 : 500;
-      return res.status(status).json({ error: error.message });
+      return this.handleError(res, error, "Product not found");
     }
   }
 
-  async createProduct(req: Request, res: Response) {
+  createProduct = async (req: Request, res: Response) => {
     try {
-      const validatedData = productSchema.parse(req.body);
-      const product = await productService.createProduct(validatedData);
-      return res.status(201).json(product);
+      const validatedData = productSchema.parse(this.getBody(req));
+      const service = this.getService(req);
+      const product = await service.createProduct(validatedData);
+      return this.success(res, product, 201);
     } catch (error: any) {
-      if (error.name === "ZodError") {
-        return res.status(400).json({ errors: error.errors });
-      }
-      if (error.message === "SKU already exists") {
-        return res.status(409).json({ error: error.message });
-      }
-      return res.status(500).json({ error: error.message });
+      return this.handleError(res, error);
     }
   }
 
-  async updateProduct(req: Request, res: Response) {
+  updateProduct = async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
-      const validatedData = productSchema.partial().parse(req.body);
-      const product = await productService.updateProduct(id, validatedData);
-      return res.status(200).json(product);
+      const validatedData = productSchema.partial().parse(this.getBody(req));
+      const service = this.getService(req);
+      const product = await service.updateProduct(id, validatedData);
+      return this.success(res, product);
     } catch (error: any) {
-      if (error.name === "ZodError") {
-        return res.status(400).json({ errors: error.errors });
-      }
-      if (error.message === "SKU already exists") {
-        return res.status(409).json({ error: error.message });
-      }
-      const status = error.message === "Product not found" ? 404 : 500;
-      return res.status(status).json({ error: error.message });
+      return this.handleError(res, error, "Product not found");
     }
   }
 
-  async deleteProduct(req: Request, res: Response) {
+  deleteProduct = async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
-      await productService.deleteProduct(id);
+      const service = this.getService(req);
+      await service.deleteProduct(id);
       return res.status(204).send();
     } catch (error: any) {
-      if (error.message === "Product not found") return res.status(404).json({ error: error.message });
-      if (error.message?.startsWith("Cannot delete")) return res.status(400).json({ error: error.message });
-      return res.status(500).json({ error: error.message });
+      return this.handleError(res, error, "Product not found");
     }
   }
 }

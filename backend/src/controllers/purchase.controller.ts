@@ -1,56 +1,49 @@
 import { Request, Response } from "express";
 import { PurchaseService } from "../services/purchase.service.js";
 import { purchaseSchema } from "../validators/purchase.validator.js";
+import { BaseController } from "./BaseController.js";
 
-const purchaseService = new PurchaseService();
+export class PurchaseController extends BaseController {
+  private getService(req: Request): PurchaseService {
+    const ctx = this.getServiceContext(req);
+    return new PurchaseService(
+      ctx.organizationId,
+      ctx.userId,
+      ctx.userRole,
+      ctx.allowedWarehouseIds
+    );
+  }
 
-export class PurchaseController {
-  async getAllPurchases(req: Request, res: Response) {
+  getAllPurchases = async (req: Request, res: Response) => {
     try {
-      const limit  = Math.min(parseInt(String(req.query.limit  ?? 100)), 500);
-      const offset = parseInt(String(req.query.offset ?? 0));
-      const [purchases, total] = await Promise.all([
-        purchaseService.getAllPurchases({ limit, offset }),
-        purchaseService.countPurchases(),
-      ]);
-      res.setHeader("X-Total-Count", total);
-      return res.status(200).json(purchases);
+      const { page, limit } = this.getPagination(req);
+      const service = this.getService(req);
+      const result = await service.getAllPurchases({ page, limit });
+      return res.status(200).json(result);
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return this.handleError(res, error);
     }
   }
 
-  async getPurchaseById(req: Request, res: Response) {
+  getPurchaseById = async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
-      const purchase = await purchaseService.getPurchaseById(id);
+      const service = this.getService(req);
+      const purchase = await service.getPurchaseById(id);
       return res.status(200).json(purchase);
     } catch (error: any) {
-      const status = error.message === "Purchase not found" ? 404 : 500;
-      return res.status(status).json({ error: error.message });
+      return this.handleError(res, error, "Purchase not found");
     }
   }
 
-  async createPurchase(req: Request, res: Response) {
+  createPurchase = async (req: Request, res: Response) => {
     try {
-      const validatedData = purchaseSchema.parse(req.body);
-      const purchase = await purchaseService.createPurchase(validatedData);
-      
+      const validatedData = purchaseSchema.parse(this.getBody(req));
+      const service = this.getService(req);
+      const purchase = await service.createPurchase(validatedData);
       return res.status(201).json(purchase);
     } catch (error: any) {
-      if (error.name === "ZodError") {
-        return res.status(400).json({ errors: error.errors });
-      }
-
-      if (error.message === "Supplier not found") {
-         return res.status(404).json({ error: error.message });
-      }
-
-      if (error.message.includes("Variant not found")) {
-        return res.status(404).json({ error: error.message });
-     }
-
-      return res.status(500).json({ error: error.message });
+      return this.handleError(res, error);
     }
   }
 }

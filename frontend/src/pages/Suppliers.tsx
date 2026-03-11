@@ -7,7 +7,7 @@ export function Suppliers() {
   const [showForm, setShowForm] = useState(false);
   const { register, handleSubmit, reset } = useForm();
 
-  const fetchSuppliers = () => api.get("/suppliers").then(r => setSuppliers(r.data)).catch(console.error);
+  const fetchSuppliers = () => api.get("/suppliers", { params: { limit: 1000 } }).then(r => setSuppliers(r.data.data)).catch(console.error);
   useEffect(() => { fetchSuppliers(); }, []);
 
   const onSubmit = async (data: any) => {

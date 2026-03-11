@@ -3,6 +3,8 @@ import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
+import { toCamelCase } from "../utils/mapper.js";
+import { getEnv } from "../config/env.js";
 
 const prisma = new PrismaClient();
 
@@ -17,14 +19,21 @@ const LoginSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 
-function generateToken(userId: string, email: string): string {
-  const secret = process.env.JWT_SECRET!;
-  const expiresIn = process.env.JWT_EXPIRES_IN || "7d";
-  return jwt.sign({ userId, email }, secret, { expiresIn } as jwt.SignOptions);
+function generateToken(userId: string, email: string, role: string, organization_id?: string | null): string {
+  const { JWT_SECRET: secret, JWT_EXPIRES_IN: expiresIn } = getEnv();
+  return jwt.sign({ userId, email, role, organization_id }, secret, { expiresIn } as jwt.SignOptions);
 }
 
 export class AuthController {
   async register(req: Request, res: Response) {
+    const env = getEnv();
+    const allowPublicRegistration =
+      env.ALLOW_PUBLIC_REGISTRATION === "true" || env.NODE_ENV !== "production";
+    if (!allowPublicRegistration) {
+      res.status(403).json({ error: "Public registration is disabled" });
+      return;
+    }
+
     const parsed = RegisterSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.issues[0].message });
@@ -40,14 +49,40 @@ export class AuthController {
     }
 
     const hashed = await bcrypt.hash(password, 12);
-    const user = await prisma.user.create({
-      data: { name, email, password: hashed },
+    
+    // Multi-tenant bootstrap:
+    // - first-ever account can initialize default org as ADMIN
+    // - subsequent self-registrations are STAFF in the first org
+    let org = await prisma.organization.findFirst();
+    let role: "ADMIN" | "STAFF" = "STAFF";
+    if (!org) {
+      org = await (prisma as any).organization.create({
+        data: { name: "Default Org", slug: "default" }
+      });
+      role = "ADMIN";
+    } else {
+      const userCount = await (prisma as any).user.count({
+        where: { organization_id: org.id }
+      });
+      if (userCount === 0) {
+        role = "ADMIN";
+      }
+    }
+
+    const user = await (prisma as any).user.create({
+      data: { 
+        name, 
+        email, 
+        password: hashed, 
+        role,
+        organization_id: org?.id
+      },
     });
 
-    const token = generateToken(user.id, user.email);
+    const token = generateToken(user.id, user.email, user.role, user.organization_id);
     res.status(201).json({
       token,
-      user: { id: user.id, name: user.name, email: user.email },
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, organization_id: user.organization_id },
     });
   }
 
@@ -60,7 +95,7 @@ export class AuthController {
 
     const { email, password } = parsed.data;
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await (prisma as any).user.findUnique({ where: { email } });
     if (!user) {
       res.status(401).json({ error: "Invalid email or password" });
       return;
@@ -72,10 +107,10 @@ export class AuthController {
       return;
     }
 
-    const token = generateToken(user.id, user.email);
+    const token = generateToken(user.id, user.email, user.role, user.organization_id);
     res.json({
       token,
-      user: { id: user.id, name: user.name, email: user.email },
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, organization_id: user.organization_id },
     });
   }
 
@@ -84,14 +119,21 @@ export class AuthController {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
-    const user = await prisma.user.findUnique({
+    const user = await (prisma as any).user.findUnique({
       where: { id: req.userId },
-      select: { id: true, name: true, email: true, created_at: true },
+      select: { 
+        id: true, 
+        name: true, 
+        email: true, 
+        role: true, 
+        organization_id: true,
+        created_at: true 
+      },
     });
     if (!user) {
       res.status(404).json({ error: "User not found" });
       return;
     }
-    res.json(user);
+    res.json(toCamelCase(user));
   }
 }

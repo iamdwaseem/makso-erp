@@ -1,66 +1,80 @@
 import { Request, Response } from "express";
 import { CustomerService } from "../services/customer.service.js";
 import { customerSchema } from "../validators/customer.validator.js";
+import { BaseController } from "./BaseController.js";
 
-const customerService = new CustomerService();
-
-export class CustomerController {
-  async getAllCustomers(req: Request, res: Response) {
-    try {
-      const customers = await customerService.getAllCustomers();
-      return res.status(200).json(customers);
-    } catch (error: any) {
-      return res.status(500).json({ error: error.message });
-    }
+export class CustomerController extends BaseController {
+  private getService(req: Request): CustomerService {
+    const ctx = this.getServiceContext(req);
+    return new CustomerService(
+      ctx.organizationId,
+      ctx.userId,
+      ctx.userRole,
+      ctx.allowedWarehouseIds
+    );
   }
 
-  async getCustomerById(req: Request, res: Response) {
+  getAllCustomers = async (req: Request, res: Response) => {
     try {
-      const id = req.params.id as string;
-      const customer = await customerService.getCustomerById(id);
-      return res.status(200).json(customer);
-    } catch (error: any) {
-      const status = error.message === "Customer not found" ? 404 : 500;
-      return res.status(status).json({ error: error.message });
-    }
-  }
+      const { page, limit, search } = this.getPagination(req);
 
-  async createCustomer(req: Request, res: Response) {
-    try {
-      const validatedData = customerSchema.parse(req.body);
-      const customer = await customerService.createCustomer(validatedData);
-      return res.status(201).json(customer);
-    } catch (error: any) {
-      if (error.name === "ZodError") {
-        return res.status(400).json({ errors: error.errors });
+      if (search !== undefined) {
+        const q = search.trim();
+        if (!q || q.length < 2) {
+          return this.success(res, { data: [], meta: { total: 0, page, limit, totalPages: 0 } });
+        }
       }
-      return res.status(500).json({ error: error.message });
-    }
-  }
 
-  async updateCustomer(req: Request, res: Response) {
-    try {
-      const id = req.params.id as string;
-      const validatedData = customerSchema.partial().parse(req.body);
-      const customer = await customerService.updateCustomer(id, validatedData);
-      return res.status(200).json(customer);
+      const service = this.getService(req);
+      const result = await service.getAllCustomers({ page, limit, search });
+      return this.success(res, result);
     } catch (error: any) {
-      if (error.name === "ZodError") {
-        return res.status(400).json({ errors: error.errors });
-      }
-      const status = error.message === "Customer not found" ? 404 : 500;
-      return res.status(status).json({ error: error.message });
+      return this.handleError(res, error);
     }
   }
 
-  async deleteCustomer(req: Request, res: Response) {
+  getCustomerById = async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
-      await customerService.deleteCustomer(id);
+      const service = this.getService(req);
+      const customer = await service.getCustomerById(id);
+      return this.success(res, customer);
+    } catch (error: any) {
+      return this.handleError(res, error, "Customer not found");
+    }
+  }
+
+  createCustomer = async (req: Request, res: Response) => {
+    try {
+      const validatedData = customerSchema.parse(this.getBody(req));
+      const service = this.getService(req);
+      const customer = await service.createCustomer(validatedData);
+      return this.success(res, customer, 201);
+    } catch (error: any) {
+      return this.handleError(res, error);
+    }
+  }
+
+  updateCustomer = async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id as string;
+      const validatedData = customerSchema.partial().parse(this.getBody(req));
+      const service = this.getService(req);
+      const customer = await service.updateCustomer(id, validatedData);
+      return this.success(res, customer);
+    } catch (error: any) {
+      return this.handleError(res, error, "Customer not found");
+    }
+  }
+
+  deleteCustomer = async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id as string;
+      const service = this.getService(req);
+      await service.deleteCustomer(id);
       return res.status(204).send();
     } catch (error: any) {
-      const status = error.message === "Customer not found" ? 404 : 500;
-      return res.status(status).json({ error: error.message });
+      return this.handleError(res, error, "Customer not found");
     }
   }
 }

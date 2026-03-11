@@ -16,7 +16,12 @@ import purchaseRoutes   from "../src/routes/purchase.routes.js";
 import saleRoutes       from "../src/routes/sale.routes.js";
 import dashboardRoutes  from "../src/routes/dashboard.routes.js";
 import authRoutes       from "../src/routes/auth.routes.js";
+import warehouseRoutes  from "../src/routes/warehouse.routes.js";
+import userRoutes       from "../src/routes/user.routes.js";
+import historyRoutes    from "../src/routes/history.routes.js";
 import { authenticate } from "../src/middleware/auth.middleware.js";
+import { resolveTenant } from "../src/middleware/tenant.middleware.js";
+import { authorizeWarehouseAccess } from "../src/middleware/warehouseAccess.middleware.js";
 
 export const prisma = new PrismaClient();
 
@@ -27,30 +32,36 @@ export function buildApp() {
   app.use(express.json());
 
   app.use("/api", authRoutes);
-  app.use("/api", authenticate, supplierRoutes);
-  app.use("/api", authenticate, customerRoutes);
-  app.use("/api", authenticate, productRoutes);
-  app.use("/api", authenticate, variantRoutes);
-  app.use("/api", authenticate, inventoryRoutes);
-  app.use("/api", authenticate, purchaseRoutes);
-  app.use("/api", authenticate, saleRoutes);
-  app.use("/api", authenticate, dashboardRoutes);
+  app.use("/api", resolveTenant);
+  app.use("/api", authenticate);
+  app.use("/api", authorizeWarehouseAccess);
+  app.use("/api", supplierRoutes);
+  app.use("/api", customerRoutes);
+  app.use("/api", productRoutes);
+  app.use("/api", variantRoutes);
+  app.use("/api", inventoryRoutes);
+  app.use("/api", purchaseRoutes);
+  app.use("/api", saleRoutes);
+  app.use("/api", dashboardRoutes);
+  app.use("/api", warehouseRoutes);
+  app.use("/api", userRoutes);
+  app.use("/api", historyRoutes);
 
   return app;
 }
 
 /** Wipe test data in dependency order */
 export async function cleanDb() {
-  await prisma.scanLog.deleteMany();
-  await prisma.inventoryLedger.deleteMany();
-  await prisma.inventory.deleteMany();
-  await prisma.purchaseItem.deleteMany();
-  await prisma.saleItem.deleteMany();
-  await prisma.purchase.deleteMany();
-  await prisma.sale.deleteMany();
-  await prisma.variant.deleteMany();
-  await prisma.product.deleteMany();
-  await prisma.supplier.deleteMany();
-  await prisma.customer.deleteMany();
-  await prisma.user.deleteMany();
+  const tables = [
+    "dashboard_metrics", "scan_logs", "inventory_ledger", "inventory_summaries",
+    "inventory", "purchase_items", "sale_items", "purchases", "sales",
+    "variants", "products", "customers", "suppliers", "user_warehouses",
+    "warehouses", "users", "organizations"
+  ];
+
+  for (const table of tables) {
+    await prisma.$executeRawUnsafe(`ALTER TABLE "${table}" DISABLE ROW LEVEL SECURITY;`);
+    await prisma.$executeRawUnsafe(`TRUNCATE TABLE "${table}" CASCADE;`);
+    await prisma.$executeRawUnsafe(`ALTER TABLE "${table}" ENABLE ROW LEVEL SECURITY;`);
+  }
 }

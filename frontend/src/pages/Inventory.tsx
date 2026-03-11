@@ -2,23 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import api from "../api";
 
-interface InventoryItem {
-  id: string;
-  variant_id: string;
-  quantity: number;
-  updated_at: string;
-  variant: { sku: string; color: string; product: { id: string; name: string } };
-  supplier: { name: string; phone: string } | null;
-}
-
-interface LedgerEntry {
-  id: string;
-  action: "IN" | "OUT";
-  quantity: number;
-  reference_type: string;
-  reference_id: string;
-  created_at: string;
-}
+import type { InventoryItem, LedgerEntry, DashboardStats } from "../types";
+import { useApi } from "../hooks/useApi";
+import { useWarehouseStore } from "../store/warehouseStore";
 
 type StatusFilter = "all" | "in_stock" | "low_stock" | "out_of_stock";
 type ViewMode = "grid" | "table";
@@ -51,8 +37,10 @@ function colourDot(colour: string) {
 }
 
 export function Inventory() {
-  const [items, setItems] = useState<InventoryItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const currentWarehouseId = useWarehouseStore(state => state.currentWarehouseId);
+
+  const [page, setPage] = useState(1);
+  const limit = 50;
 
   // Filters
   const [search, setSearch] = useState("");
@@ -80,11 +68,27 @@ export function Inventory() {
   const [ledgerLoading, setLedgerLoading] = useState(false);
 
   useEffect(() => {
-    api.get("/inventory")
-      .then(res => setItems(res.data))
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, []);
+    setPage(1);
+  }, [search, productFilter, statusFilter, currentWarehouseId]);
+
+  const { data: statsRaw } = useApi<DashboardStats>("/dashboard/stats", {
+    dependencies: [currentWarehouseId]
+  });
+  const stats = statsRaw?.counts;
+
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const { data: itemsData, meta: itemsMeta, loading } = useApi<InventoryItem[]>("/inventory", { 
+    params: { page, limit, search: debouncedSearch, productId: productFilter !== "all" ? productFilter : undefined, status: statusFilter !== "all" ? statusFilter : undefined },
+    dependencies: [page, debouncedSearch, productFilter, statusFilter, currentWarehouseId]
+  });
+
+  const items = itemsData || [];
+  const total = itemsMeta?.total || 0;
 
   // ── Unique filter options ─────────────────────────────────────────────────
   const productOptions = useMemo(() => {
@@ -122,9 +126,8 @@ export function Inventory() {
   }, [items, search, productFilter, supplierFilter, statusFilter]);
 
   // ── Summary stats ──────────────────────────────────────────────────────────
-  const totalUnits = filtered.reduce((s, i) => s + i.quantity, 0);
-  const lowCount = filtered.filter(i => statusOf(i.quantity) === "low_stock").length;
-  const outCount = filtered.filter(i => statusOf(i.quantity) === "out_of_stock").length;
+  const lowCountPage = filtered.filter(i => statusOf(i.quantity) === "low_stock").length;
+  const outCountPage = filtered.filter(i => statusOf(i.quantity) === "out_of_stock").length;
 
   // ── Grid: group filtered items by product ─────────────────────────────────
   const grouped = useMemo(() => {
@@ -142,7 +145,7 @@ export function Inventory() {
     setSelectedItem(item);
     setLedgerLoading(true);
     setLedger([]);
-    api.get(`/inventory/${item.variant_id}/ledger`)
+    api.get(`/inventory/${item.variantId}/ledger`)
       .then(res => setLedger(res.data))
       .catch(console.error)
       .finally(() => setLedgerLoading(false));
@@ -181,10 +184,10 @@ export function Inventory() {
       {/* ── Summary chips ─────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: "Showing SKUs", value: filtered.length, icon: "🏷️", cls: "text-blue-700 bg-blue-50 border-blue-100" },
-          { label: "Total Units", value: totalUnits, icon: "📦", cls: "text-emerald-700 bg-emerald-50 border-emerald-100" },
-          { label: "Low Stock", value: lowCount, icon: "⚠️", cls: "text-amber-700 bg-amber-50 border-amber-100" },
-          { label: "Out of Stock", value: outCount, icon: "🚫", cls: "text-red-700 bg-red-50 border-red-100" },
+          { label: "Total Units", value: stats?.totalUnits || 0, icon: "📦", cls: "text-emerald-700 bg-emerald-50 border-emerald-100" },
+          { label: "Matches Found", value: total, icon: "🏷️", cls: "text-purple-700 bg-purple-50 border-purple-100" },
+          { label: "Low Stock (Page)", value: lowCountPage, icon: "⚠️", cls: "text-amber-700 bg-amber-50 border-amber-100" },
+          { label: "Out of Stock (Page)", value: outCountPage, icon: "🚫", cls: "text-red-700 bg-red-50 border-red-100" },
         ].map(s => (
           <div key={s.label} className={`rounded-xl border p-4 flex items-center gap-3 ${s.cls}`}>
             <span className="text-xl">{s.icon}</span>
@@ -367,7 +370,7 @@ export function Inventory() {
                     <td className="py-3 px-4 text-sm text-gray-500 font-mono">{item.variant.sku}</td>
                     <td className="py-3 px-4 text-sm text-gray-600">{item.supplier?.name ?? "—"}</td>
                     <td className="py-3 px-4 text-xs text-gray-400">
-                      {new Date(item.updated_at).toLocaleDateString()}
+                      {new Date(item.updatedAt).toLocaleDateString()}
                     </td>
                     <td className="py-3 px-4 text-sm font-bold text-right text-gray-900">{item.quantity}</td>
                     <td className="py-3 px-4">
@@ -443,7 +446,7 @@ export function Inventory() {
                     {ledgerWithBalance.map(entry => (
                       <tr key={entry.id} className="hover:bg-gray-50 transition-colors">
                         <td className="py-3 text-sm text-gray-600 pr-4">
-                          {new Date(entry.created_at).toLocaleString()}
+                          {new Date(entry.createdAt).toLocaleString()}
                         </td>
                         <td className="py-3 pr-4">
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wide ${
@@ -453,8 +456,8 @@ export function Inventory() {
                           </span>
                         </td>
                         <td className="py-3 pr-4 text-sm text-gray-500">
-                          <span className="capitalize">{entry.reference_type.toLowerCase()}</span>
-                          <span className="ml-1 text-[10px] font-mono text-gray-400">{entry.reference_id.slice(0, 8)}</span>
+                          <span className="capitalize">{entry.referenceType.toLowerCase()}</span>
+                          <span className="ml-1 text-[10px] font-mono text-gray-400">{entry.referenceId.slice(0, 8)}</span>
                         </td>
                         <td className={`py-3 pr-4 text-sm font-bold text-right ${entry.action === "IN" ? "text-emerald-600" : "text-orange-600"}`}>
                           {entry.action === "IN" ? "+" : "−"}{entry.quantity}
@@ -476,6 +479,29 @@ export function Inventory() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Pagination Controls ────────────────────────────────────────────── */}
+      {!loading && total > limit && (
+        <div className="flex items-center justify-between border-t border-gray-100 mt-6 pt-4">
+          <button
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+            disabled={page === 1}
+            className="px-4 py-2 border rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          >
+            ← Previous
+          </button>
+          <span className="text-sm font-medium text-gray-700">
+            Page {page} of {Math.ceil(total / limit) || 1}
+          </span>
+          <button
+            onClick={() => setPage(p => Math.min(Math.ceil(total / limit), p + 1))}
+            disabled={page >= Math.ceil(total / limit)}
+            className="px-4 py-2 border rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          >
+            Next →
+          </button>
         </div>
       )}
     </div>

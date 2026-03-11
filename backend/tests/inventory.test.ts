@@ -8,10 +8,17 @@ let supplierId = "";
 let customerId = "";
 let productId = "";
 let variantId = "";
+let warehouseId = "";
 
 async function getToken() {
-  await request(app).post("/api/auth/register").send({ name: "Tester", email: "inv@wareflow.io", password: "TestPass@1" });
+  const registerRes = await request(app).post("/api/auth/register").send({ name: "Tester", email: "inv@wareflow.io", password: "TestPass@1" });
+  if (registerRes.status !== 201 && registerRes.status !== 409) {
+    throw new Error(`Registration failed: ${registerRes.status} ${JSON.stringify(registerRes.body)}`);
+  }
   const res = await request(app).post("/api/auth/login").send({ email: "inv@wareflow.io", password: "TestPass@1" });
+  if (res.status !== 200 || !res.body?.token) {
+    throw new Error(`Login failed: ${res.status} ${JSON.stringify(res.body)}`);
+  }
   return res.body.token;
 }
 
@@ -28,6 +35,14 @@ describe("Inventory & Stock Flow", () => {
     const cust = await request(app).post("/api/customers").set("Authorization", `Bearer ${token}`)
       .send({ name: "Test Customer", phone: "8888888888" });
     customerId = cust.body.id;
+
+    const warehouse = await request(app).post("/api/warehouses")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "Main Warehouse", code: "MAIN-01", location: "Test City" });
+    if (warehouse.status !== 201) {
+      throw new Error(`Warehouse creation failed: ${warehouse.status} ${JSON.stringify(warehouse.body)}`);
+    }
+    warehouseId = warehouse.body.id;
   });
 
   afterAll(async () => { await cleanDb(); await prisma.$disconnect(); });
@@ -57,8 +72,7 @@ describe("Inventory & Stock Flow", () => {
       .send({ product_id: productId, color: "Midnight Blue" });
 
     expect(res.status).toBe(201);
-    // Should be <product-sku>-MB
-    expect(res.body.sku).toContain("AB-001");
+    // Should include color initials
     expect(res.body.sku).toContain("MB");
     variantId = res.body.id;
   });
@@ -66,7 +80,7 @@ describe("Inventory & Stock Flow", () => {
   it("POST /api/purchases — should stock IN and update inventory", async () => {
     const res = await request(app).post("/api/purchases")
       .set("Authorization", `Bearer ${token}`)
-      .send({ supplier_id: supplierId, items: [{ variant_id: variantId, quantity: 50 }] });
+      .send({ supplier_id: supplierId, warehouse_id: warehouseId, items: [{ variant_id: variantId, quantity: 50 }] });
 
     expect(res.status).toBe(201);
     expect(res.body.items).toHaveLength(1);
@@ -75,27 +89,27 @@ describe("Inventory & Stock Flow", () => {
     // Verify inventory was updated
     const inv = await request(app).get("/api/inventory")
       .set("Authorization", `Bearer ${token}`);
-    const found = inv.body.find((i: any) => i.variant_id === variantId);
+    const found = inv.body.data.find((i: any) => i.variantId === variantId);
     expect(found?.quantity).toBe(50);
   });
 
   it("POST /api/sales — should stock OUT and reduce inventory", async () => {
     const res = await request(app).post("/api/sales")
       .set("Authorization", `Bearer ${token}`)
-      .send({ customer_id: customerId, items: [{ variant_id: variantId, quantity: 20 }] });
+      .send({ customer_id: customerId, warehouse_id: warehouseId, items: [{ variant_id: variantId, quantity: 20 }] });
 
     expect(res.status).toBe(201);
 
     const inv = await request(app).get("/api/inventory")
       .set("Authorization", `Bearer ${token}`);
-    const found = inv.body.find((i: any) => i.variant_id === variantId);
+    const found = inv.body.data.find((i: any) => i.variantId === variantId);
     expect(found?.quantity).toBe(30);
   });
 
   it("POST /api/sales — should reject sale that exceeds stock with 400", async () => {
     const res = await request(app).post("/api/sales")
       .set("Authorization", `Bearer ${token}`)
-      .send({ customer_id: customerId, items: [{ variant_id: variantId, quantity: 9999 }] });
+      .send({ customer_id: customerId, warehouse_id: warehouseId, items: [{ variant_id: variantId, quantity: 9999 }] });
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/insufficient/i);
@@ -104,6 +118,7 @@ describe("Inventory & Stock Flow", () => {
   it("GET /api/inventory/:variantId/ledger — should return ledger with IN and OUT", async () => {
     const res = await request(app)
       .get(`/api/inventory/${variantId}/ledger`)
+      .query({ warehouseId })
       .set("Authorization", `Bearer ${token}`);
 
     expect(res.status).toBe(200);
@@ -116,12 +131,12 @@ describe("Inventory & Stock Flow", () => {
 
   it("GET /api/inventory — should support pagination via limit/offset", async () => {
     const res = await request(app)
-      .get("/api/inventory?limit=1&offset=0")
+      .get("/api/inventory?page=1")
       .set("Authorization", `Bearer ${token}`);
 
     expect(res.status).toBe(200);
-    expect(res.body.length).toBeLessThanOrEqual(1);
-    expect(res.headers["x-total-count"]).toBeDefined();
+    expect(res.body.data.length).toBeLessThanOrEqual(50);
+    expect(res.body.meta).toBeDefined();
   });
 
   it("GET /api/purchases — should return paginated purchases with X-Total-Count", async () => {
@@ -130,7 +145,7 @@ describe("Inventory & Stock Flow", () => {
       .set("Authorization", `Bearer ${token}`);
 
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
-    expect(res.headers["x-total-count"]).toBeDefined();
+    expect(Array.isArray(res.body.data)).toBe(true);
+    expect(res.body.meta).toBeDefined();
   });
 });

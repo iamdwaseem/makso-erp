@@ -1,49 +1,58 @@
+import { PrismaClient } from "@prisma/client";
 import { InventoryRepository } from "../repositories/inventory.repository.js";
 import { AdjustInventoryInput } from "../validators/inventory.validator.js";
 import { VariantRepository } from "../repositories/variant.repository.js";
-
-const inventoryRepository = new InventoryRepository();
-const variantRepository = new VariantRepository();
+import prisma from "../lib/prisma.js";
 
 export class InventoryService {
-  async getAllInventory(opts?: { limit?: number; offset?: number }) {
-    return inventoryRepository.findAll(opts);
+  private inventoryRepo: InventoryRepository;
+  private variantRepo: VariantRepository;
+
+  constructor(
+    organizationId: string, 
+    userId?: string, 
+    userRole?: string, 
+    allowedWarehouseIds: string[] = []
+  ) {
+    this.inventoryRepo = new InventoryRepository(prisma as any, organizationId, userId, userRole, allowedWarehouseIds);
+    this.variantRepo = new VariantRepository(prisma as any, organizationId, userId, userRole, allowedWarehouseIds);
   }
 
-  async countInventory() {
-    return inventoryRepository.count();
+  async getAllInventory(opts?: { page?: number; limit?: number; search?: string; productId?: string; status?: string; warehouseId?: string }) {
+    return this.inventoryRepo.findAll(opts);
   }
 
-  async getInventoryByVariantId(variantId: string) {
-    const variant = await variantRepository.findById(variantId);
+  async countInventory(search?: string, productId?: string, status?: string, warehouseId?: string) {
+    return this.inventoryRepo.count(search, productId, status, warehouseId);
+  }
+
+  async getInventoryByVariantId(variantId: string, warehouseId?: string) {
+    const variant = await this.variantRepo.findById(variantId);
     if (!variant) {
       throw new Error("Variant not found");
     }
     
-    const inventory = await inventoryRepository.findByVariantId(variantId);
+    const inventory = await this.inventoryRepo.findByVariantId(variantId, warehouseId);
     if (!inventory) {
-       // Return default object if no inventory movement has happened yet
-       return { variant_id: variantId, quantity: 0, variant };
+       return { variant_id: variantId, warehouse_id: warehouseId, quantity: 0, variant };
     }
     return inventory;
   }
 
   async adjustInventory(data: AdjustInventoryInput, txClient?: any) {
-    // Validate variant exists first
-    const variant = await variantRepository.findById(data.variant_id);
+    const variant = await this.variantRepo.findById(data.variant_id);
     if (!variant) {
       throw new Error("Variant not found");
     }
 
-  // Handle transaction inside repository
-    return inventoryRepository.adjustInventory(data, txClient);
+    return this.inventoryRepo.adjustInventory(data, txClient);
   }
 
-  async getLedgerByVariantId(variantId: string) {
-    const variant = await variantRepository.findById(variantId);
+  async getLedgerByVariantId(variantId: string, warehouseId?: string) {
+    const variant = await this.variantRepo.findById(variantId);
     if (!variant) {
       throw new Error("Variant not found");
     }
-    return inventoryRepository.getLedgerByVariantId(variantId);
+    return this.inventoryRepo.getLedgerByVariantId(variantId, warehouseId);
   }
 }

@@ -7,6 +7,7 @@ export const saleItemSchema = z.object({
 
 export const saleSchema = z.object({
   customer_id: z.string().uuid("Invalid customer ID"),
+  warehouse_id: z.string().uuid("Invalid warehouse ID"),
   invoice_number: z.string().optional(),
   items: z.array(saleItemSchema).min(1, "Items are required"),
 });

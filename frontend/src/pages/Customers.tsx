@@ -7,7 +7,7 @@ export function Customers() {
   const [showForm, setShowForm] = useState(false);
   const { register, handleSubmit, reset } = useForm();
 
-  const fetchCustomers = () => api.get("/customers").then(r => setCustomers(r.data)).catch(console.error);
+  const fetchCustomers = () => api.get("/customers", { params: { limit: 1000 } }).then(r => setCustomers(r.data.data)).catch(console.error);
   useEffect(() => { fetchCustomers(); }, []);
 
   const onSubmit = async (data: any) => {

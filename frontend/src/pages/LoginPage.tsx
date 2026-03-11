@@ -1,10 +1,12 @@
 import { useState, FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { useWarehouseStore } from "../store/warehouseStore";
 
 export function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const { clearWarehouses } = useWarehouseStore();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -16,6 +18,7 @@ export function LoginPage() {
     setError("");
     setLoading(true);
     try {
+      clearWarehouses();
       await login(email, password);
       navigate("/", { replace: true });
     } catch (err: any) {
@@ -89,13 +92,6 @@ export function LoginPage() {
             </button>
           </form>
         </div>
-
-        <p className="text-center text-sm text-gray-500 mt-6">
-          Don't have an account?{" "}
-          <Link to="/register" className="text-blue-600 font-medium hover:underline">
-            Create one
-          </Link>
-        </p>
       </div>
     </div>
   );

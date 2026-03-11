@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../api";
+import { useWarehouseStore } from "../store/warehouseStore";
 
 interface DashboardStats {
   counts: {
@@ -13,8 +14,8 @@ interface DashboardStats {
     totalUnits: number;
   };
   lowStock: any[];
+  topStocked: any[];
   recentActivity: any[];
-  inventory: any[];
 }
 
 interface LedgerEntry {
@@ -32,7 +33,7 @@ function LedgerModal({ item, onClose }: { item: any; onClose: () => void }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.get(`/inventory/${item.variant_id}/ledger`)
+    api.get(`/inventory/${item.variantId}/ledger`)
       .then(r => {
         // compute running balance
         const asc = [...r.data].reverse();
@@ -45,7 +46,7 @@ function LedgerModal({ item, onClose }: { item: any; onClose: () => void }) {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [item.variant_id]);
+  }, [item.variantId]);
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
@@ -82,11 +83,11 @@ function LedgerModal({ item, onClose }: { item: any; onClose: () => void }) {
               <tbody className="divide-y divide-gray-50">
                 {ledger.map((e: any) => (
                   <tr key={e.id} className="hover:bg-gray-50">
-                    <td className="py-3 text-sm text-gray-600 pr-4">{new Date(e.created_at).toLocaleString()}</td>
+                    <td className="py-3 text-sm text-gray-600 pr-4">{new Date(e.createdAt).toLocaleString()}</td>
                     <td className="py-3 pr-4">
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${e.action === "IN" ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"}`}>{e.action}</span>
                     </td>
-                    <td className="py-3 pr-4 text-sm text-gray-500 capitalize">{e.reference_type.toLowerCase()} <span className="text-[10px] font-mono text-gray-400">{e.reference_id.slice(0,8)}</span></td>
+                    <td className="py-3 pr-4 text-sm text-gray-500 capitalize">{e.referenceType.toLowerCase()} <span className="text-[10px] font-mono text-gray-400">{e.referenceId.slice(0,8)}</span></td>
                     <td className={`py-3 pr-4 text-sm font-bold text-right ${e.action === "IN" ? "text-emerald-600" : "text-orange-600"}`}>{e.action === "IN" ? "+" : "−"}{e.quantity}</td>
                     <td className="py-3 text-sm font-semibold text-right text-gray-700">{e.balance}</td>
                   </tr>
@@ -108,13 +109,15 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [ledgerItem, setLedgerItem] = useState<any>(null);
   const navigate = useNavigate();
+  const currentWarehouseId = useWarehouseStore(state => state.currentWarehouseId);
 
   useEffect(() => {
+    setLoading(true);
     api.get("/dashboard/stats")
       .then(res => setStats(res.data))
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  }, [currentWarehouseId]);
 
   if (loading) {
     return (
@@ -131,15 +134,10 @@ export function Dashboard() {
     return <div className="text-red-500 p-4 bg-red-50 rounded-xl text-sm">Failed to load dashboard. Is the backend running?</div>;
   }
 
-  const maxInventoryQty = Math.max(...stats.inventory.map(i => i.quantity), 1);
+  const maxInventoryQty = Math.max(...stats.topStocked.map(i => i.quantity), 1);
 
-  // Top stocked (highest qty)
-  const topStocked = [...stats.inventory]
-    .sort((a, b) => b.quantity - a.quantity)
-    .slice(0, 8);
-
-  // Critical items (0 stock)
-  const critical = stats.inventory.filter(i => i.quantity === 0);
+  // Critical items (0 stock) - we can estimate from lowStock or just show low stock
+  const critical = stats.lowStock.filter(i => i.quantity === 0);
 
   const statCards = [
     {
@@ -330,8 +328,8 @@ export function Dashboard() {
                       <span className="text-gray-400 font-normal"> · {entry.variant?.color}</span>
                     </p>
                     <p className="text-xs text-gray-400">
-                      <span className="capitalize">{entry.reference_type?.toLowerCase()}</span>
-                      {" · "}{new Date(entry.created_at).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}
+                      <span className="capitalize">{entry.referenceType?.toLowerCase()}</span>
+                      {" · "}{new Date(entry.createdAt).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}
                     </p>
                   </div>
                   <span className={`text-sm font-bold shrink-0 ${entry.action === "IN" ? "text-emerald-600" : "text-orange-600"}`}>
@@ -358,7 +356,7 @@ export function Dashboard() {
         </div>
 
         <div className="divide-y divide-gray-50">
-          {topStocked.map(item => {
+          {stats.topStocked.map(item => {
             const pct = Math.max((item.quantity / maxInventoryQty) * 100, 0.5);
             const isOut = item.quantity === 0;
             const isLow = !isOut && item.quantity < 10;

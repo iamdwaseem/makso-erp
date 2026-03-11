@@ -7,6 +7,7 @@ export const purchaseItemSchema = z.object({
 
 export const purchaseSchema = z.object({
   supplier_id: z.string().uuid("Invalid supplier ID"),
+  warehouse_id: z.string().uuid("Invalid warehouse ID"),
   invoice_number: z.string().optional(),
   items: z.array(purchaseItemSchema).min(1, "Items are required"),
 });

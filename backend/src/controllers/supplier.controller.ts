@@ -1,66 +1,80 @@
 import { Request, Response } from "express";
 import { SupplierService } from "../services/supplier.service.js";
 import { supplierSchema } from "../validators/supplier.validator.js";
+import { BaseController } from "./BaseController.js";
 
-const supplierService = new SupplierService();
-
-export class SupplierController {
-  async getAllSuppliers(req: Request, res: Response) {
-    try {
-      const suppliers = await supplierService.getAllSuppliers();
-      return res.status(200).json(suppliers);
-    } catch (error: any) {
-      return res.status(500).json({ error: error.message });
-    }
+export class SupplierController extends BaseController {
+  private getService(req: Request): SupplierService {
+    const ctx = this.getServiceContext(req);
+    return new SupplierService(
+      ctx.organizationId,
+      ctx.userId,
+      ctx.userRole,
+      ctx.allowedWarehouseIds
+    );
   }
 
-  async getSupplierById(req: Request, res: Response) {
+  getAllSuppliers = async (req: Request, res: Response) => {
     try {
-      const id = req.params.id as string;
-      const supplier = await supplierService.getSupplierById(id);
-      return res.status(200).json(supplier);
-    } catch (error: any) {
-      const status = error.message === "Supplier not found" ? 404 : 500;
-      return res.status(status).json({ error: error.message });
-    }
-  }
+      const { page, limit, search } = this.getPagination(req);
 
-  async createSupplier(req: Request, res: Response) {
-    try {
-      const validatedData = supplierSchema.parse(req.body);
-      const supplier = await supplierService.createSupplier(validatedData);
-      return res.status(201).json(supplier);
-    } catch (error: any) {
-      if (error.name === "ZodError") {
-        return res.status(400).json({ errors: error.errors });
+      if (search !== undefined) {
+        const q = search.trim();
+        if (!q || q.length < 2) {
+          return this.success(res, { data: [], meta: { total: 0, page, limit, totalPages: 0 } });
+        }
       }
-      return res.status(500).json({ error: error.message });
-    }
-  }
 
-  async updateSupplier(req: Request, res: Response) {
-    try {
-      const id = req.params.id as string;
-      const validatedData = supplierSchema.partial().parse(req.body);
-      const supplier = await supplierService.updateSupplier(id, validatedData);
-      return res.status(200).json(supplier);
+      const service = this.getService(req);
+      const result = await service.getAllSuppliers({ page, limit, search });
+      return this.success(res, result);
     } catch (error: any) {
-      if (error.name === "ZodError") {
-        return res.status(400).json({ errors: error.errors });
-      }
-      const status = error.message === "Supplier not found" ? 404 : 500;
-      return res.status(status).json({ error: error.message });
+      return this.handleError(res, error);
     }
   }
 
-  async deleteSupplier(req: Request, res: Response) {
+  getSupplierById = async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
-      await supplierService.deleteSupplier(id);
+      const service = this.getService(req);
+      const supplier = await service.getSupplierById(id);
+      return this.success(res, supplier);
+    } catch (error: any) {
+      return this.handleError(res, error, "Supplier not found");
+    }
+  }
+
+  createSupplier = async (req: Request, res: Response) => {
+    try {
+      const validatedData = supplierSchema.parse(this.getBody(req));
+      const service = this.getService(req);
+      const supplier = await service.createSupplier(validatedData);
+      return this.success(res, supplier, 201);
+    } catch (error: any) {
+      return this.handleError(res, error);
+    }
+  }
+
+  updateSupplier = async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id as string;
+      const validatedData = supplierSchema.partial().parse(this.getBody(req));
+      const service = this.getService(req);
+      const supplier = await service.updateSupplier(id, validatedData);
+      return this.success(res, supplier);
+    } catch (error: any) {
+      return this.handleError(res, error, "Supplier not found");
+    }
+  }
+
+  deleteSupplier = async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id as string;
+      const service = this.getService(req);
+      await service.deleteSupplier(id);
       return res.status(204).send();
     } catch (error: any) {
-      const status = error.message === "Supplier not found" ? 404 : 500;
-      return res.status(status).json({ error: error.message });
+      return this.handleError(res, error, "Supplier not found");
     }
   }
 }

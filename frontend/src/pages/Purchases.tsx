@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import api from "../api";
+import { useWarehouseStore } from "../store/warehouseStore";
 
 export function Purchases() {
   const [purchases, setPurchases] = useState<any[]>([]);
   const [variants, setVariants] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
+  const currentWarehouseId = useWarehouseStore(state => state.currentWarehouseId);
 
   // Stock-in form state
   const [showForm, setShowForm] = useState(false);
@@ -17,12 +19,12 @@ export function Purchases() {
   const [submitting, setSubmitting] = useState(false);
 
   const fetchAll = () => {
-    api.get("/purchases").then(r => setPurchases(r.data)).catch(console.error);
-    api.get("/variants").then(r => setVariants(r.data)).catch(console.error);
-    api.get("/suppliers").then(r => setSuppliers(r.data)).catch(console.error);
+    api.get("/purchases").then(r => setPurchases(r.data.data)).catch(console.error);
+    api.get("/variants").then(r => setVariants(r.data.data)).catch(console.error);
+    api.get("/suppliers").then(r => setSuppliers(r.data.data)).catch(console.error);
   };
 
-  useEffect(() => { fetchAll(); }, []);
+  useEffect(() => { fetchAll(); }, [currentWarehouseId]);
 
   const resetForm = () => {
     setSelectedVariant(""); setQuantity(1);
@@ -46,9 +48,11 @@ export function Purchases() {
       }
 
       if (!supplierId) { alert("Please select or add a supplier"); setSubmitting(false); return; }
+      if (currentWarehouseId === "all") { alert("Please select a specific warehouse in the header to receive stock."); setSubmitting(false); return; }
 
       await api.post("/purchases", {
         supplier_id: supplierId,
+        warehouse_id: currentWarehouseId,
         items: [{ variant_id: selectedVariant, quantity }],
       });
 

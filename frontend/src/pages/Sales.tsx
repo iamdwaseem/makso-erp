@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import api from "../api";
+import { useWarehouseStore } from "../store/warehouseStore";
 
 export function Sales() {
   const [sales, setSales] = useState<any[]>([]);
+  const currentWarehouseId = useWarehouseStore(state => state.currentWarehouseId);
 
   useEffect(() => {
-    api.get("/sales").then(r => setSales(r.data)).catch(console.error);
-  }, []);
+    api.get("/sales").then(r => setSales(r.data.data)).catch(console.error);
+  }, [currentWarehouseId]);
 
   return (
     <div className="space-y-4">

@@ -1,20 +1,14 @@
-import { PrismaClient } from "@prisma/client";
 import { VariantRepository } from "../repositories/variant.repository.js";
 import { ProductRepository } from "../repositories/product.repository.js";
 import { VariantInput } from "../validators/variant.validator.js";
-
-const variantRepository = new VariantRepository();
-const productRepository = new ProductRepository();
-const prisma = new PrismaClient();
+import prisma from "../lib/prisma.js";
 
 /**
  * Generate a variant SKU from the product's base SKU + colour initials.
- * Product SKU "MKB-001" + color "Midnight Black" → "MKB-001-MB"
- * Falls back to first 3 chars of colour if single word: "Red" → "MKB-001-RED"
- * Appends counter if there's a collision: "MKB-001-RED-2"
  */
-async function generateVariantSku(productId: string, color: string): Promise<string> {
-  const product = await productRepository.findById(productId);
+async function generateVariantSku(productId: string, color: string, organizationId: string): Promise<string> {
+  const productRepo = new ProductRepository(prisma as any, organizationId);
+  const product = await productRepo.findById(productId);
   const baseSku = product?.sku ?? "PRD-001";
 
   const colourCode = color
@@ -28,15 +22,18 @@ async function generateVariantSku(productId: string, color: string): Promise<str
   const candidate = `${baseSku}-${colorPart}`;
 
   // Check for collision and increment
-  const existing = await prisma.variant.findMany({
-    where: { sku: { startsWith: candidate } },
+  const existing = await (prisma as any).variant.findMany({
+    where: { 
+      organization_id: organizationId,
+      sku: { startsWith: candidate } 
+    },
     select: { sku: true },
   });
 
   if (existing.length === 0) return candidate;
 
   const usedNumbers = new Set(
-    existing.map(v => {
+    existing.map((v: any) => {
       const match = v.sku.replace(candidate, "").match(/^-(\d+)$/);
       return match ? parseInt(match[1], 10) : 0;
     })
@@ -48,56 +45,80 @@ async function generateVariantSku(productId: string, color: string): Promise<str
 }
 
 export class VariantService {
-  async getAllVariants() {
-    return variantRepository.findAll();
+  private variantRepository: VariantRepository;
+  private productRepository: ProductRepository;
+  private organizationId: string;
+
+  constructor(
+    organizationId: string,
+    userId?: string,
+    userRole?: string,
+    allowedWarehouseIds: string[] = []
+  ) {
+    this.organizationId = organizationId;
+    this.variantRepository = new VariantRepository(prisma as any, organizationId, userId, userRole, allowedWarehouseIds);
+    this.productRepository = new ProductRepository(prisma as any, organizationId, userId, userRole, allowedWarehouseIds);
+  }
+
+  async getAllVariants(opts?: { page?: number; limit?: number; search?: string }) {
+    return this.variantRepository.findAll(opts);
   }
 
   async getVariantById(id: string) {
-    const variant = await variantRepository.findById(id);
+    const variant = await this.variantRepository.findById(id);
     if (!variant) throw new Error("Variant not found");
     return variant;
   }
 
   async getVariantsByProductId(productId: string) {
-    return variantRepository.findByProductId(productId);
+    return this.variantRepository.findByProductId(productId);
+  }
+
+  async getVariantBySku(sku: string) {
+    const variant = await this.variantRepository.findBySku(sku);
+    if (!variant) throw new Error("Variant not found");
+    return variant;
   }
 
   async createVariant(data: VariantInput) {
-    // Auto-generate SKU if not provided
-    const sku = data.sku?.trim() || (await generateVariantSku(data.product_id, data.color));
+    const sku = data.sku?.trim() || (await generateVariantSku(data.product_id, data.color, this.organizationId));
 
-    const existingSku = await variantRepository.findBySku(sku);
+    const existingSku = await this.variantRepository.findBySku(sku);
     if (existingSku) throw new Error("SKU already exists");
 
-    return variantRepository.create({ ...data, sku });
+    return this.variantRepository.create({ ...data, sku });
   }
 
   async updateVariant(id: string, data: Partial<VariantInput>) {
     const variant = await this.getVariantById(id);
 
     if (data.sku && data.sku !== variant.sku) {
-      const existingSku = await variantRepository.findBySku(data.sku);
+      const existingSku = await this.variantRepository.findBySku(data.sku);
       if (existingSku) throw new Error("SKU already exists");
     }
 
-    return variantRepository.update(id, data);
+    return this.variantRepository.update(id, data);
   }
 
   async deleteVariant(id: string) {
     await this.getVariantById(id);
 
-    // ── Zero Inventory Guard ─────────────────────────────────────────────
-    const inventory = await prisma.inventory.findUnique({
-      where: { variant_id: id },
+    // SQL RLS handles the organization filter, but we explicitly check here for extra safety
+    const inventory = await (prisma as any).inventory.findFirst({
+      where: { 
+        organization_id: this.organizationId,
+        variant_id: id,
+        quantity: { gt: 0 }
+      },
     });
 
-    if (inventory && inventory.quantity > 0) {
+    if (inventory) {
       throw new Error(
         `Cannot delete: variant still has ${inventory.quantity} unit(s) in stock. ` +
         `Write off or transfer the stock before deleting.`
       );
     }
 
-    return variantRepository.delete(id);
+    return this.variantRepository.delete(id);
   }
 }

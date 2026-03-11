@@ -5,6 +5,7 @@ import rateLimit from "express-rate-limit";
 
 const router = Router();
 const authController = new AuthController();
+const isProduction = process.env.NODE_ENV === "production";
 
 // 10 attempts per 15 minutes per IP on login — brute-force protection
 const loginLimiter = rateLimit({
@@ -24,8 +25,16 @@ const registerLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-router.post("/auth/register", registerLimiter, (req, res) => authController.register(req, res));
-router.post("/auth/login",    loginLimiter,    (req, res) => authController.login(req, res));
+router.post(
+  "/auth/register",
+  isProduction ? registerLimiter : (_req, _res, next) => next(),
+  (req, res) => authController.register(req, res)
+);
+router.post(
+  "/auth/login",
+  isProduction ? loginLimiter : (_req, _res, next) => next(),
+  (req, res) => authController.login(req, res)
+);
 router.get("/auth/me", authenticate, (req, res) => authController.me(req as any, res));
 
 export default router;

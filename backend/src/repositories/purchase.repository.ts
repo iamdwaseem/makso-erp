@@ -1,37 +1,52 @@
-import { PrismaClient, Purchase, PurchaseItem } from "@prisma/client";
+import { PrismaClient, Purchase, Prisma } from "@prisma/client";
 import { PurchaseInput } from "../validators/purchase.validator.js";
 import { InventoryRepository } from "./inventory.repository.js";
 import crypto from "crypto";
-
-const prisma = new PrismaClient();
+import { BaseRepository } from "./BaseRepository.js";
 
 function generateInvoiceNumber(prefix: string): string {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const suffix = crypto.randomBytes(2).toString("hex").toUpperCase();
   return `${prefix}-${date}-${suffix}`;
 }
-const inventoryRepository = new InventoryRepository();
 
-export class PurchaseRepository {
-  async findAll({ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}): Promise<Purchase[]> {
-    return prisma.purchase.findMany({
-      include: {
+export class PurchaseRepository extends BaseRepository {
+  private inventoryRepo: InventoryRepository;
+
+  constructor(
+    prisma: PrismaClient | Prisma.TransactionClient, 
+    organizationId: string,
+    userId?: string,
+    userRole?: string,
+    allowedWarehouseIds: string[] = []
+  ) {
+    super(prisma, organizationId, userId, userRole, allowedWarehouseIds);
+    this.inventoryRepo = new InventoryRepository(this.prisma, organizationId, userId, userRole, allowedWarehouseIds);
+  }
+
+  async findAll({ page = 1, limit = 50 }: { page?: number; limit?: number } = {}) {
+    return this.paginate<Purchase>(
+      (this.prisma as any).purchase,
+      this.tenantWhere({}),
+      page,
+      limit,
+      {
         supplier: true,
         items: { include: { variant: { include: { product: true } } } },
       },
-      orderBy: { created_at: "desc" },
-      skip: offset,
-      take: limit,
-    });
+      { created_at: "desc" }
+    );
   }
 
   async count(): Promise<number> {
-    return prisma.purchase.count();
+    return (this.prisma as any).purchase.count({
+      where: this.tenantWhere({}),
+    });
   }
 
   async findById(id: string): Promise<Purchase | null> {
-    return prisma.purchase.findUnique({
-      where: { id },
+    return (this.prisma as any).purchase.findFirst({
+      where: this.tenantWhere({ id }),
       include: {
         supplier: true,
         items: { include: { variant: { include: { product: true } } } },
@@ -40,29 +55,34 @@ export class PurchaseRepository {
   }
 
   async createPurchase(data: PurchaseInput): Promise<Purchase> {
-    return prisma.$transaction(async (tx) => {
+    // Note: this.prisma might already be a transaction client if injected as such
+    const txFunc = async (tx: Prisma.TransactionClient) => {
+      // Create a fresh inventory repo with the transaction client
+      const txInventoryRepo = new InventoryRepository(tx, this.organizationId, this.userId, this.userRole, this.allowedWarehouseIds);
+
       // 1. Create purchase record
       const purchase = await tx.purchase.create({
-        data: {
+        data: this.tenantData({
           supplier_id: data.supplier_id,
           invoice_number: generateInvoiceNumber("PUR"),
-        },
+        }),
       });
 
       // 2. Create purchase_items
       for (const item of data.items) {
         await tx.purchaseItem.create({
-          data: {
+          data: this.tenantData({
             purchase_id: purchase.id,
             variant_id: item.variant_id,
             quantity: item.quantity,
-          },
+          }),
         });
 
-        // 3 & 4. Increase inventory & insert ledger entries (using the existing engine logic synced via tx)
-        await inventoryRepository.adjustInventory(
+        // 3 & 4. Increase inventory & insert ledger entries
+        await txInventoryRepo.adjustInventory(
           {
             variant_id: item.variant_id,
+            warehouse_id: data.warehouse_id,
             action: "IN",
             quantity: item.quantity,
             reference_type: "PURCHASE",
@@ -80,6 +100,12 @@ export class PurchaseRepository {
           items: { include: { variant: { include: { product: true } } } },
         },
       }) as unknown as Purchase;
-    });
+    };
+
+    if ((this.prisma as any).$transaction) {
+      return (this.prisma as PrismaClient).$transaction(txFunc);
+    } else {
+      return txFunc(this.prisma as Prisma.TransactionClient);
+    }
   }
 }

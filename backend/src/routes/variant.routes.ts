@@ -5,6 +5,7 @@ const router = Router();
 const variantController = new VariantController();
 
 router.get("/variants", variantController.getAllVariants);
+router.get("/variants/sku/:sku", variantController.getVariantBySku);
 router.get("/variants/:id", variantController.getVariantById);
 router.post("/variants", variantController.createVariant);
 router.put("/variants/:id", variantController.updateVariant);

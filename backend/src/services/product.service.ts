@@ -2,18 +2,14 @@ import { PrismaClient } from "@prisma/client";
 import { ProductRepository } from "../repositories/product.repository.js";
 import { ProductInput } from "../validators/product.validator.js";
 
-const productRepository = new ProductRepository();
-const prisma = new PrismaClient();
+import prisma from "../lib/prisma.js";
+import { VariantRepository } from "../repositories/variant.repository.js";
 
 /**
  * Generate a base SKU from a product name.
- * "Michael Kors Bag" → "MKB"
- * Appends a zero-padded counter to guarantee uniqueness, e.g. "MKB-001", "MKB-002"
  */
-async function generateProductSku(name: string): Promise<string> {
-  // Strip non-ASCII characters (emoji, symbols) before extracting initials
+async function generateProductSku(name: string, organizationId: string): Promise<string> {
   const asciiName = name.replace(/[^\x20-\x7E]/g, "").trim();
-
   const initials = (asciiName || "PRD")
     .split(/\s+/)
     .filter(Boolean)
@@ -22,15 +18,17 @@ async function generateProductSku(name: string): Promise<string> {
 
   const base = initials || "PRD";
 
-  // Find how many products already start with this prefix
-  const existing = await prisma.product.findMany({
-    where: { sku: { startsWith: base } },
+  const existing = await (prisma as any).product.findMany({
+    where: { 
+      organization_id: organizationId,
+      sku: { startsWith: base } 
+    },
     select: { sku: true },
   });
 
   let counter = 1;
   const usedNumbers = new Set(
-    existing.map(p => {
+    existing.map((p: any) => {
       const match = p.sku.match(/-(\d+)$/);
       return match ? parseInt(match[1], 10) : 0;
     })
@@ -41,58 +39,68 @@ async function generateProductSku(name: string): Promise<string> {
 }
 
 export class ProductService {
-  async getAllProducts() {
-    return productRepository.findAll();
+  private productRepository: ProductRepository;
+  private variantRepository: VariantRepository;
+  private organizationId: string;
+
+  constructor(
+    organizationId: string,
+    userId?: string,
+    userRole?: string,
+    allowedWarehouseIds: string[] = []
+  ) {
+    this.organizationId = organizationId;
+    this.productRepository = new ProductRepository(prisma as any, organizationId, userId, userRole, allowedWarehouseIds);
+    this.variantRepository = new VariantRepository(prisma as any, organizationId, userId, userRole, allowedWarehouseIds);
+  }
+
+  async getAllProducts(opts?: { page?: number; limit?: number; search?: string }) {
+    return this.productRepository.findAll(opts);
   }
 
   async getProductById(id: string) {
-    const product = await productRepository.findById(id);
+    const product = await this.productRepository.findById(id);
     if (!product) throw new Error("Product not found");
     return product;
   }
 
   async createProduct(data: ProductInput) {
-    // Auto-generate SKU if not provided
-    const sku = data.sku?.trim() || (await generateProductSku(data.name));
+    const sku = data.sku?.trim() || (await generateProductSku(data.name, this.organizationId));
 
-    const existingSku = await productRepository.findBySku(sku);
+    const existingSku = await this.productRepository.findBySku(sku);
     if (existingSku) throw new Error("SKU already exists");
 
-    return productRepository.create({ ...data, sku });
+    return this.productRepository.create({ ...data, sku });
   }
 
   async updateProduct(id: string, data: Partial<ProductInput>) {
     const product = await this.getProductById(id);
 
     if (data.sku && data.sku !== product.sku) {
-      const existingSku = await productRepository.findBySku(data.sku);
+      const existingSku = await this.productRepository.findBySku(data.sku);
       if (existingSku) throw new Error("SKU already exists");
     }
 
-    return productRepository.update(id, data);
+    return this.productRepository.update(id, data);
   }
 
   async deleteProduct(id: string) {
     await this.getProductById(id);
 
-    // ── Zero Inventory Guard ─────────────────────────────────────────────
     // Prevent deleting a product that still has live stock in the warehouse.
-    // Ghost stock (exists physically but invisible on dashboard) is a data
-    // integrity violation that can corrupt stocktake reports.
-    const liveVariants = await prisma.variant.findMany({
-      where: { product_id: id, deleted_at: null },
-      select: { id: true },
-    });
+    const liveVariants = await this.variantRepository.findByProductId(id);
+    const variantIds = liveVariants.map(v => v.id);
 
-    const activeInventory = await prisma.inventory.findMany({
+    const activeInventory = await (prisma as any).inventory.findMany({
       where: {
-        variant_id: { in: liveVariants.map(v => v.id) },
+        organization_id: this.organizationId,
+        variant_id: { in: variantIds },
         quantity: { gt: 0 },
       },
     });
 
     if (activeInventory.length > 0) {
-      const totalUnits = activeInventory.reduce((sum, i) => sum + i.quantity, 0);
+      const totalUnits = activeInventory.reduce((sum: number, i: any) => sum + i.quantity, 0);
       throw new Error(
         `Cannot delete: product still has ${totalUnits} unit(s) in stock across ` +
         `${activeInventory.length} variant(s). ` +
@@ -100,6 +108,6 @@ export class ProductService {
       );
     }
 
-    return productRepository.delete(id);
+    return this.productRepository.delete(id);
   }
 }

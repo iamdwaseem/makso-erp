@@ -1,9 +1,12 @@
+import { useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { WarehouseSelector } from "./WarehouseSelector";
 
 export function Layout() {
   const location = useLocation();
   const { user, logout } = useAuth();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navItems = [
     { name: "📊 Dashboard", path: "/" },
@@ -11,12 +14,25 @@ export function Layout() {
     { name: "📤 Stock Exit", path: "/stock-exit" },
     { name: "📦 Inventory", path: "/inventory" },
     { name: "📋 History", path: "/history" },
+    ...(user?.role === "ADMIN" ? [
+      { name: "👥 Users", path: "/users" },
+      { name: "🏢 Warehouses", path: "/warehouses" }
+    ] : []),
   ];
 
   return (
     <div className="flex h-screen bg-gray-100 overflow-hidden text-gray-900 w-full">
+      {mobileMenuOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-30 lg:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className="w-64 bg-white border-r border-gray-200 flex-shrink-0 flex flex-col">
+      <aside className={`w-64 bg-white border-r border-gray-200 flex-shrink-0 flex flex-col fixed lg:static z-40 h-full transition-transform duration-200 ${
+        mobileMenuOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+      }`}>
         <div className="h-16 flex items-center px-6 border-b border-gray-200">
           <h1 className="text-xl font-bold font-mono">WAREHOUSE ERP</h1>
         </div>
@@ -28,6 +44,7 @@ export function Layout() {
                 <li key={item.path}>
                   <Link
                     to={item.path}
+                    onClick={() => setMobileMenuOpen(false)}
                     className={`block px-6 py-2.5 text-sm font-medium ${
                       isActive
                         ? "bg-blue-50 text-blue-700 border-r-4 border-blue-700"
@@ -70,13 +87,27 @@ export function Layout() {
 
       {/* Main Content Component */}
       <main className="flex-1 flex flex-col h-screen overflow-hidden">
-        <header className="h-16 bg-white border-b border-gray-200 flex items-center px-8 shadow-sm justify-between">
-            <h2 className="text-lg font-semibold text-gray-800">
+        <header className="min-h-16 bg-white border-b border-gray-200 flex items-center px-3 sm:px-4 lg:px-8 py-2 shadow-sm justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <button
+                onClick={() => setMobileMenuOpen(true)}
+                className="lg:hidden p-2 rounded-md text-gray-500 hover:bg-gray-100"
+                aria-label="Open menu"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+              <h2 className="text-sm sm:text-base lg:text-lg font-semibold text-gray-800 truncate">
               {navItems.find(i => i.path === location.pathname)?.name || "Not Found"}
-            </h2>
+              </h2>
+            </div>
+            <div className="flex items-center gap-2 sm:gap-4">
+              <WarehouseSelector />
+            </div>
         </header>
 
-        <div className="flex-1 overflow-auto p-8">
+        <div className="flex-1 overflow-auto p-3 sm:p-4 lg:p-8">
           <Outlet />
         </div>
       </main>
