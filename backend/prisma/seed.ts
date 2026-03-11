@@ -3,11 +3,12 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 
 const prisma = new PrismaClient();
-const BATCH_SIZE = 5000;
-const TARGET_COUNT = 25000;
-const USER_COUNT = 500;
+const BATCH_SIZE = 100;
+// Demo seed: light data for fast setup (~50 records per entity)
+const TARGET_COUNT = 50;
+const USER_COUNT = 5;
 const ADMIN_COUNT = 1;
-const MANAGER_COUNT = 25;
+const MANAGER_COUNT = 1;
 const STAFF_COUNT = USER_COUNT - ADMIN_COUNT - MANAGER_COUNT;
 
 function chunks<T>(arr: T[], size: number): T[][] {
