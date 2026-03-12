@@ -42,20 +42,23 @@ export function History() {
 
   const triggerFileDownload = async (blob: Blob, fileName: string) => {
     const anyWindow = window as any;
-    if ("showSaveFilePicker" in window) {
-      const pickerHandle = await anyWindow.showSaveFilePicker({
-        suggestedName: fileName,
-        types: [
-          {
-            description: "Export file",
-            accept: { [blob.type || "application/octet-stream"]: [`.${fileName.split(".").pop() || "bin"}`] }
-          }
-        ]
-      });
-      const writable = await pickerHandle.createWritable();
-      await writable.write(blob);
-      await writable.close();
-      return;
+    const ext = fileName.split(".").pop() || "bin";
+    // showSaveFilePicker rejects text/csv;charset=utf-8 - always use anchor download for CSV
+    const isCsv = blob.type?.includes("csv") || ext === "csv";
+    if (!isCsv && "showSaveFilePicker" in window) {
+      try {
+        const mime = blob.type && !blob.type.includes("charset") ? blob.type : "application/octet-stream";
+        const pickerHandle = await anyWindow.showSaveFilePicker({
+          suggestedName: fileName,
+          types: [{ description: "Export file", accept: { [mime]: [`.${ext}`] } }]
+        });
+        const writable = await pickerHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        return;
+      } catch {
+        /* fall through to anchor download */
+      }
     }
 
     if (typeof anyWindow.navigator?.msSaveOrOpenBlob === "function") {
@@ -137,7 +140,7 @@ export function History() {
       });
       const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
       const fileName = `wareflow_history_${period}_${Date.now()}.csv`;
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
       await triggerFileDownload(blob, fileName);
       setExportNotice({ type: "success", text: `CSV exported successfully (${exportEntries.length} records).` });
     } catch (err: any) {
@@ -286,6 +289,15 @@ export function History() {
               <div className="flex gap-3 p-5 border-t border-gray-100 bg-gray-50 rounded-b-2xl">
                 <button onClick={() => setSelectedInvoice(null)}
                   className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-xl hover:bg-gray-300 text-sm font-medium">Close</button>
+                <button onClick={() => {
+                  const printArea = document.getElementById("invoice-print-area");
+                  if (!printArea) return;
+                  const w = window.open("", "_blank");
+                  if (!w) return;
+                  w.document.write(`<!DOCTYPE html><html><head><title>Invoice</title></head><body>${printArea.innerHTML}<script>window.print();window.close();<\/script></body></html>`);
+                  w.document.close();
+                }}
+                  className="flex-1 bg-blue-600 text-white py-3 rounded-xl hover:bg-blue-700 text-sm font-medium">🖨️ Print Invoice</button>
               </div>
             </div>
           </div>

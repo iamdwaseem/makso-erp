@@ -51,6 +51,7 @@ export function ScanStation() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [manualSku, setManualSku] = useState("");
+  const [completedSale, setCompletedSale] = useState<any>(null);
   const currentWarehouseId = useWarehouseStore(state => state.currentWarehouseId);
 
   const lastScanRef = useRef<string | null>(null);
@@ -195,11 +196,12 @@ export function ScanStation() {
         return;
       }
 
-      await api.post("/sales", {
+      const saleRes = await api.post("/sales", {
         customerId: customerId,
         warehouseId: currentWarehouseId,
         items: cart.map(c => ({ variantId: c.variantId, quantity: c.quantity })),
       });
+      const sale = saleRes.data;
 
       const customerName = customerMode === "new"
         ? newCustomerName
@@ -219,6 +221,7 @@ export function ScanStation() {
       clearCart();
       setCheckoutOpen(false);
       setSelectedCustomerId(""); setNewCustomerName(""); setNewCustomerPhone(""); setNewCustomerAddress("");
+      setCompletedSale(sale);
     } catch (error: any) {
       const msg = error.response?.data?.error || error.message;
       const entry: ScanEntry = {
@@ -293,6 +296,86 @@ export function ScanStation() {
               <button onClick={handleCheckout} disabled={submitting}
                 className="flex-1 bg-orange-600 text-white py-3 rounded-xl hover:bg-orange-700 text-sm font-bold disabled:opacity-50">
                 {submitting ? "Processing..." : `Confirm Sale`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Invoice Modal (after checkout) ───────────────────────────────────── */}
+      {completedSale && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+          onClick={() => setCompletedSale(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}>
+            <div id="scan-invoice-print-area">
+              <div className="p-6 border-b border-gray-200">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h2 className="text-2xl font-bold text-gray-900">📤 Sale Invoice</h2>
+                    <p className="text-sm text-gray-400 mt-1">WareFlow ERP</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-mono font-bold px-3 py-1.5 rounded-lg inline-block bg-green-50 text-green-700">
+                      {completedSale.invoice_number || "—"}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-2">
+                      {new Date(completedSale.sale_date || completedSale.created_at).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="px-6 pt-5">
+                <div className="p-4 rounded-xl bg-green-50/50 border border-green-100">
+                  <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Sold To (Customer)</p>
+                  <p className="text-lg font-bold mt-1 text-green-800">{completedSale.customer?.name || "Unknown"}</p>
+                  <div className="flex flex-wrap gap-x-6 gap-y-1 mt-2 text-sm text-gray-600">
+                    {completedSale.customer?.phone && <span>📞 {completedSale.customer.phone}</span>}
+                    {completedSale.customer?.email && <span>✉️ {completedSale.customer.email}</span>}
+                    {completedSale.customer?.address && <span>📍 {completedSale.customer.address}</span>}
+                  </div>
+                </div>
+              </div>
+              <div className="px-6 py-5">
+                <table className="min-w-full">
+                  <thead>
+                    <tr className="border-b-2 border-gray-200">
+                      <th className="text-left py-3 px-3 text-xs font-medium text-gray-500 uppercase">#</th>
+                      <th className="text-left py-3 px-3 text-xs font-medium text-gray-500 uppercase">Product</th>
+                      <th className="text-left py-3 px-3 text-xs font-medium text-gray-500 uppercase">Variant</th>
+                      <th className="text-left py-3 px-3 text-xs font-medium text-gray-500 uppercase">SKU</th>
+                      <th className="text-right py-3 px-3 text-xs font-medium text-gray-500 uppercase">Qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {completedSale.items?.map((item: any, idx: number) => (
+                      <tr key={item.id} className="border-b border-gray-100">
+                        <td className="py-3 px-3 text-sm text-gray-400">{idx + 1}</td>
+                        <td className="py-3 px-3 text-sm font-medium text-gray-900">
+                          {item.variant?.product?.name || "—"}
+                        </td>
+                        <td className="py-3 px-3 text-sm text-gray-600">{item.variant?.color || "—"}</td>
+                        <td className="py-3 px-3 text-sm text-gray-500 font-mono">{item.variant?.sku || "—"}</td>
+                        <td className="py-3 px-3 text-sm text-right font-bold text-orange-600">-{item.quantity}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="flex gap-3 p-5 border-t border-gray-100 bg-gray-50 rounded-b-2xl">
+              <button onClick={() => setCompletedSale(null)}
+                className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-xl hover:bg-gray-300 text-sm font-medium">Close</button>
+              <button onClick={() => {
+                const el = document.getElementById("scan-invoice-print-area");
+                if (!el) return;
+                const w = window.open("", "_blank");
+                if (!w) return;
+                w.document.write(`<html><head><title>Invoice ${completedSale.invoice_number || "Sale"}</title></head><body>${el.outerHTML}<script>window.print();window.close();</script></body></html>`);
+                w.document.close();
+              }}
+                className="flex-1 bg-orange-600 text-white py-3 rounded-xl hover:bg-orange-700 text-sm font-bold">
+                🖨️ Print Invoice
               </button>
             </div>
           </div>

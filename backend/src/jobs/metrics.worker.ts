@@ -10,8 +10,9 @@ export function startMetricsWorker(intervalMs: number = 60000) {
     const service = new DashboardMetricsService();
     const env = getEnv();
     
-    // Initial population on startup
-    service.refreshAllMetrics();
+    // Delay first run so DB (e.g. Docker Postgres) has time to be ready
+    const initialDelayMs = 8000;
+    setTimeout(() => service.refreshAllMetrics(), initialDelayMs);
     
     // Repeated execution
     const interval = setInterval(() => {
