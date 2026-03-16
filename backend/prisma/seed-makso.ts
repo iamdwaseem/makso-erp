@@ -9,7 +9,14 @@
  * so dashboard trend and gain/loss graphs have data. Some variants
  * are given low stock so "Products to Reorder" table shows rows.
  */
-import { PrismaClient, LedgerAction, UserRole } from "@prisma/client";
+import {
+  PrismaClient,
+  LedgerAction,
+  UserRole,
+  PurchaseStatus,
+  SaleStatus,
+  PaymentType,
+} from "@prisma/client";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import fs from "fs";
@@ -209,7 +216,17 @@ async function main() {
   // Purchases and ledger entries spread over the past 4 months so trend/gain-loss graphs have data
   const now = Date.now();
   const oneDay = 24 * 60 * 60 * 1000;
-  const purchasesData: { id: string; organization_id: string; supplier_id: string; warehouse_id: string; invoice_number: string; purchase_date: Date; created_at: Date; updated_at: Date; status: string }[] = [];
+  const purchasesData: {
+    id: string;
+    organization_id: string;
+    supplier_id: string;
+    warehouse_id: string;
+    invoice_number: string;
+    purchase_date: Date;
+    created_at: Date;
+    updated_at: Date;
+    status: PurchaseStatus;
+  }[] = [];
   const purchaseItemsData: { id: string; organization_id: string; purchase_id: string; variant_id: string; quantity: number }[] = [];
   const ledgerInData: { id: string; organization_id: string; variant_id: string; warehouse_id: string; action: LedgerAction; quantity: number; reference_type: string; reference_id: string; created_at: Date }[] = [];
 
@@ -228,7 +245,7 @@ async function main() {
       purchase_date: created,
       created_at: created,
       updated_at: created,
-      status: "SUBMITTED",
+      status: PurchaseStatus.SUBMITTED,
     });
     const numItems = 1 + (i % 5);
     for (let j = 0; j < numItems; j++) {
@@ -265,7 +282,20 @@ async function main() {
   }
 
   // Sales and ledger OUT over past 2 months
-  const salesData: { id: string; organization_id: string; customer_id: string; warehouse_id: string; invoice_number: string; sale_date: Date; created_at: Date; updated_at: Date; status: string; created_by: string; payment_type: string; total_amount: number }[] = [];
+  const salesData: {
+    id: string;
+    organization_id: string;
+    customer_id: string;
+    warehouse_id: string;
+    invoice_number: string;
+    sale_date: Date;
+    created_at: Date;
+    updated_at: Date;
+    status: SaleStatus;
+    created_by: string;
+    payment_type: PaymentType;
+    total_amount: number;
+  }[] = [];
   const saleItemsData: { id: string; organization_id: string; sale_id: string; variant_id: string; quantity: number }[] = [];
   const ledgerOutData: { id: string; organization_id: string; variant_id: string; warehouse_id: string; action: LedgerAction; quantity: number; reference_type: string; reference_id: string; created_at: Date }[] = [];
 
@@ -284,9 +314,9 @@ async function main() {
       sale_date: created,
       created_at: created,
       updated_at: created,
-      status: "SUBMITTED",
+      status: SaleStatus.SUBMITTED,
       created_by: usersData[0].id,
-      payment_type: i % 2 === 0 ? "CASH" : "CREDIT",
+      payment_type: i % 2 === 0 ? PaymentType.CASH : PaymentType.CREDIT,
       total_amount: (i % 10 + 1) * 50,
     });
     const v = variantsData[(i * 7) % variantsData.length];

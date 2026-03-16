@@ -111,6 +111,9 @@ export class SaleRepository extends BaseRepository {
         data: this.tenantData({
           customer_id: data.customer_id,
           invoice_number: generateInvoiceNumber("SAL"),
+          warehouse_id: data.warehouse_id,
+          created_by: this.userId || "SYSTEM",
+          total_amount: 0,
         }),
       });
 
