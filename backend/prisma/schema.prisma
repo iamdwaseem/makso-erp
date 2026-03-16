@@ -204,6 +204,39 @@ model InventoryLedger {
   @@map("inventory_ledger")
 }
 
+model Transfer {
+  id                  String         @id @default(uuid()) @db.Uuid
+  organization_id     String         @db.Uuid
+  source_warehouse_id String         @db.Uuid
+  target_warehouse_id String         @db.Uuid
+  status              String         @default("DRAFT")
+  created_at          DateTime       @default(now())
+  updated_at          DateTime       @updatedAt
+  items               TransferItem[]
+  organization        Organization   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  source_warehouse    Warehouse      @relation("TransferSource", fields: [source_warehouse_id], references: [id], onDelete: Cascade)
+  target_warehouse    Warehouse      @relation("TransferTarget", fields: [target_warehouse_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id])
+  @@index([source_warehouse_id])
+  @@index([target_warehouse_id])
+  @@index([status])
+  @@map("transfers")
+}
+
+model TransferItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  transfer_id String   @db.Uuid
+  variant_id  String   @db.Uuid
+  quantity    Int
+  transfer    Transfer @relation(fields: [transfer_id], references: [id], onDelete: Cascade)
+  variant     Variant  @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+
+  @@index([transfer_id])
+  @@index([variant_id])
+  @@map("transfer_items")
+}
+
 model Purchase {
   id              String         @id @default(uuid()) @db.Uuid
   organization_id String         @db.Uuid

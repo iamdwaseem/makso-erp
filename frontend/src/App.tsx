@@ -19,6 +19,7 @@ import { StockReportPage } from "./pages/inventory/reports/StockReportPage";
 import { InventorySummaryReportPage } from "./pages/inventory/reports/InventorySummaryReportPage";
 import { ItemTransactionsReportPage } from "./pages/inventory/reports/ItemTransactionsReportPage";
 import { LowStockReportPage } from "./pages/inventory/reports/LowStockReportPage";
+import { InventoryTransferPlaceholder } from "./pages/inventory/InventoryTransferPlaceholder";
 import { History } from "./pages/History";
 import { UserManagement } from "./pages/UserManagement";
 import { WarehouseManagement } from "./pages/WarehouseManagement";
@@ -50,6 +51,7 @@ export default function App() {
             <Route path="inventory/receipt-notes" element={<GoodsReceiptNotesPage />} />
             <Route path="inventory/receipt-notes/:id" element={<ReceiptNoteDetailPage />} />
             <Route path="inventory/stock-exit" element={<ScanStation />} />
+            <Route path="inventory/transfers" element={<InventoryTransferPlaceholder />} />
             <Route path="inventory/adjustment" element={<InventoryAdjustmentPage />} />
             <Route path="inventory/reports/stock" element={<StockReportPage />} />
             <Route path="inventory/reports/summary" element={<InventorySummaryReportPage />} />
