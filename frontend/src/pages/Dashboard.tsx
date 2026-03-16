@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import api from "../api";
 import { useWarehouseStore } from "../store/warehouseStore";
 import { StatCard } from "../components/dashboard/StatCard";
@@ -9,10 +8,6 @@ import { DashboardBarChart } from "../components/dashboard/DashboardBarChart";
 import { DashboardPieChart } from "../components/dashboard/DashboardPieChart";
 import { CashBankTable } from "../components/dashboard/CashBankTable";
 import { useApi } from "../hooks/useApi";
-
-const CURRENCY = "AED";
-const formatMoney = (n: number) =>
-  n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " " + CURRENCY;
 
 interface DashboardStats {
   counts: {
@@ -145,7 +140,6 @@ export function Dashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [ledgerItem, setLedgerItem] = useState<any>(null);
-  const navigate = useNavigate();
   const currentWarehouseId = useWarehouseStore((s) => s.currentWarehouseId);
 
   type TrendPoint = { date: string; value: number };
@@ -245,9 +239,6 @@ export function Dashboard() {
     { title: "TOTAL PURCHASES", value: String(c.totalPurchases), variant: "yellow" as const },
     { title: "STOCK UNITS", value: String(c.totalUnits), variant: "white" as const },
   ];
-
-  const maxInventoryQty = Math.max(...stats.topStocked.map((i) => i.quantity), 1);
-  const critical = stats.lowStock.filter((i) => i.quantity === 0);
 
   return (
     <div className="p-6">

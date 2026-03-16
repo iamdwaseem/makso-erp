@@ -1,5 +1,3 @@
-import { Link } from "react-router-dom";
-
 export function MaterialRequestPlaceholder() {
   return (
     <div className="p-6">

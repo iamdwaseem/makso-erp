@@ -2,13 +2,13 @@ FROM node:20-alpine AS base
 WORKDIR /app
 
 ENV NODE_ENV=production
+RUN apk add --no-cache openssl
 
 COPY backend/package*.json ./backend/
 WORKDIR /app/backend
-RUN npm ci --omit=dev
+RUN npm ci --include=dev
 
 COPY backend/tsconfig.json ./tsconfig.json
-COPY backend/tsconfig.build.json ./tsconfig.build.json 2>/dev/null || true
 COPY backend/src ./src
 COPY backend/prisma ./prisma
 
@@ -19,6 +19,7 @@ FROM node:20-alpine
 WORKDIR /app/backend
 
 ENV NODE_ENV=production
+RUN apk add --no-cache openssl
 
 COPY --from=base /app/backend/node_modules ./node_modules
 COPY --from=base /app/backend/dist ./dist
@@ -28,4 +29,3 @@ COPY backend/package*.json ./
 EXPOSE 4000
 
 CMD ["npm", "run", "start"]
-

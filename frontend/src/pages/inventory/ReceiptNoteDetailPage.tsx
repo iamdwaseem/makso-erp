@@ -155,9 +155,8 @@ export function ReceiptNoteDetailPage() {
 
   if (!purchase) return null;
 
-  const dateStr = (purchase.purchase_date || purchase.created_at)
-    ? new Date(purchase.purchase_date || purchase.created_at).toLocaleString()
-    : "—";
+  const dateSource = purchase.purchase_date ?? purchase.created_at;
+  const dateStr = dateSource ? new Date(dateSource).toLocaleString() : "—";
 
   return (
     <div className="p-6">

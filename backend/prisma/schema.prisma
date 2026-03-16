@@ -26,6 +26,7 @@ model Organization {
   sales             Sale[]
   scan_logs         ScanLog[]
   suppliers         Supplier[]
+  transfers         Transfer[]
   users             User[]
   variants          Variant[]
   warehouses        Warehouse[]
@@ -62,6 +63,8 @@ model Warehouse {
   user_assignments  UserWarehouse[]
   purchases         Purchase[]
   sales             Sale[]
+  transfers_out     Transfer[]         @relation("TransferSource")
+  transfers_in      Transfer[]         @relation("TransferTarget")
   organization      Organization       @relation(fields: [organization_id], references: [id], onDelete: Cascade)
 
   @@unique([organization_id, code])
@@ -134,6 +137,7 @@ model Variant {
   purchase_items  PurchaseItem[]
   sale_items      SaleItem[]
   scan_logs       ScanLog[]
+  transfer_items  TransferItem[]
   organization    Organization       @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   product         Product            @relation(fields: [product_id], references: [id], onDelete: Cascade)
 

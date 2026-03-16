@@ -4,7 +4,7 @@ WORKDIR /app/frontend
 ENV NODE_ENV=production
 
 COPY frontend/package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --include=dev
 
 COPY frontend/vite.config.* ./
 COPY frontend/tsconfig.* ./
