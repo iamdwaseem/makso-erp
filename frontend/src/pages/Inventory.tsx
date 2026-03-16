@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { QRCodeSVG } from "qrcode.react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Barcode from "react-barcode";
 import api from "../api";
 
 import type { InventoryItem, LedgerEntry, DashboardStats } from "../types";
@@ -49,18 +49,42 @@ export function Inventory() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [view, setView] = useState<ViewMode>("grid");
 
-  // QR modal
-  const [qrSku, setQrSku] = useState<string | null>(null);
+  // Barcode modal
+  const [barcodeSku, setBarcodeSku] = useState<string | null>(null);
+  // Direct print from list (hidden barcode render)
+  const [printSku, setPrintSku] = useState<string | null>(null);
+  const printRef = useRef<HTMLDivElement>(null);
 
-  const printQr = (sku: string) => {
-    const svg = document.getElementById("inv-qr-print-area");
-    if (!svg) return;
+  const printBarcode = (sku: string) => {
+    const el = document.getElementById("inv-barcode-print-area");
+    if (!el) return;
     const win = window.open("", "_blank");
     if (!win) return;
-    win.document.write(`<html><head><title>QR - ${sku}</title>
+    win.document.write(`<html><head><title>Barcode - ${sku}</title>
       <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:monospace;}p{font-size:18px;margin-top:12px;}</style></head>
-      <body>${svg.outerHTML}<p>${sku}</p><script>window.print();window.close();</script></body></html>`);
+      <body>${el.innerHTML}<p>${sku}</p><script>window.print();window.close();</script></body></html>`);
   };
+
+  // Print barcode directly from list (no modal)
+  const printBarcodeFromList = (sku: string) => {
+    setPrintSku(sku);
+  };
+  useEffect(() => {
+    if (!printSku) return;
+    const t = setTimeout(() => {
+      const el = printRef.current;
+      if (el) {
+        const win = window.open("", "_blank");
+        if (win) {
+          win.document.write(`<html><head><title>Barcode - ${printSku}</title>
+            <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:monospace;}p{font-size:18px;margin-top:12px;}</style></head>
+            <body>${el.innerHTML}<p>${printSku}</p><script>window.print();window.close();</script></body></html>`);
+        }
+      }
+      setPrintSku(null);
+    }, 100);
+    return () => clearTimeout(t);
+  }, [printSku]);
 
   // Ledger modal
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
@@ -93,7 +117,11 @@ export function Inventory() {
   // ── Unique filter options ─────────────────────────────────────────────────
   const productOptions = useMemo(() => {
     const seen = new Map<string, string>();
-    items.forEach(i => seen.set(i.variant.product.id, i.variant.product.name));
+    items.forEach(i => {
+      const id = i.variant?.product?.id ?? (i as any).variant?.product_id;
+      const name = i.variant?.product?.name ?? "Product";
+      if (id) seen.set(id, name);
+    });
     return Array.from(seen.entries()).sort((a, b) => a[1].localeCompare(b[1]));
   }, [items]);
 
@@ -140,13 +168,24 @@ export function Inventory() {
     return Array.from(map.values()).sort((a, b) => a.productName.localeCompare(b.productName));
   }, [filtered]);
 
-  // ── Ledger ────────────────────────────────────────────────────────────────
+  // ── Ledger (normalize snake_case from backend) ──────────────────────────────
+  const normalizeLedgerEntry = (e: any): LedgerEntry => ({
+    id: e.id,
+    action: (e.action === "OUT" ? "OUT" : "IN") as "IN" | "OUT",
+    quantity: Number(e.quantity ?? 0),
+    referenceType: e.reference_type ?? e.referenceType ?? "",
+    referenceId: e.reference_id ?? e.referenceId ?? "",
+    createdAt: e.created_at ?? e.createdAt ?? "",
+  });
   const openLedger = (item: InventoryItem) => {
     setSelectedItem(item);
     setLedgerLoading(true);
     setLedger([]);
-    api.get(`/inventory/${item.variantId}/ledger`)
-      .then(res => setLedger(res.data))
+    api.get(`/inventory/${item.variantId ?? item.variant?.id}/ledger`)
+      .then(res => {
+        const raw = Array.isArray(res.data) ? res.data : [];
+        setLedger(raw.map(normalizeLedgerEntry));
+      })
       .catch(console.error)
       .finally(() => setLedgerLoading(false));
   };
@@ -165,17 +204,32 @@ export function Inventory() {
   return (
     <div className="space-y-5">
 
-      {/* ── QR Modal (always rendered at top level) ────────────────────── */}
-      {qrSku && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setQrSku(null)}>
+      {/* Hidden barcode for direct print from list */}
+      <div
+        ref={printRef}
+        aria-hidden
+        className="absolute left-[-9999px] top-0 overflow-hidden"
+      >
+        {printSku && (
+          <div className="flex justify-center">
+            <Barcode value={printSku} format="CODE128" displayValue={true} width={2} height={48} />
+          </div>
+        )}
+      </div>
+
+      {/* ── Barcode Modal ───────────────────────────────────────────────── */}
+      {barcodeSku && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setBarcodeSku(null)}>
           <div className="bg-white rounded-2xl p-8 shadow-2xl text-center space-y-4" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-gray-800">QR Code</h3>
+            <h3 className="text-lg font-semibold text-gray-800">Barcode</h3>
             <p className="text-sm text-gray-500">Print and stick this on the product</p>
-            <div id="inv-qr-print-area"><QRCodeSVG value={qrSku} size={200} /></div>
-            <p className="font-mono text-sm text-gray-600 bg-gray-100 px-3 py-1.5 rounded">{qrSku}</p>
+            <div id="inv-barcode-print-area" className="flex justify-center">
+              <Barcode value={barcodeSku} format="CODE128" displayValue={true} width={2} height={48} />
+            </div>
+            <p className="font-mono text-sm text-gray-600 bg-gray-100 px-3 py-1.5 rounded">{barcodeSku}</p>
             <div className="flex gap-3 justify-center">
-              <button onClick={() => printQr(qrSku)} className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm font-medium">🖨️ Print</button>
-              <button onClick={() => setQrSku(null)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 text-sm font-medium">Close</button>
+              <button onClick={() => printBarcode(barcodeSku)} className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm font-medium">🖨️ Print</button>
+              <button onClick={() => setBarcodeSku(null)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 text-sm font-medium">Close</button>
             </div>
           </div>
         </div>
@@ -318,8 +372,17 @@ export function Inventory() {
                           <span className="text-sm font-bold text-gray-900">{item.quantity}</span>
                           <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${cls}`}>{label}</span>
                           <button
-                            onClick={e => { e.stopPropagation(); setQrSku(item.variant.sku); }}
-                            title="Generate QR"
+                            onClick={e => { e.stopPropagation(); printBarcodeFromList(item.variant.sku); }}
+                            title="Print Barcode"
+                            className="p-1.5 rounded-lg text-gray-300 hover:text-amber-600 hover:bg-amber-50 transition-colors"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 00-2 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={e => { e.stopPropagation(); setBarcodeSku(item.variant.sku); }}
+                            title="View Barcode"
                             className="p-1.5 rounded-lg text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition-colors"
                           >
                             <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -346,7 +409,7 @@ export function Inventory() {
           <table className="min-w-full">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                {["Product", "Variant", "SKU", "Supplier", "Last Updated", "Qty", "Status", "QR"].map(h => (
+                {["Product", "Variant", "SKU", "Supplier", "Last Updated", "Qty", "Status", "Barcode / Print"].map(h => (
                   <th key={h} className={`py-3 px-4 text-xs font-medium text-gray-500 uppercase tracking-wide ${h === "Qty" ? "text-right" : "text-left"}`}>
                     {h}
                   </th>
@@ -377,15 +440,26 @@ export function Inventory() {
                       <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${cls}`}>{label}</span>
                     </td>
                     <td className="py-3 px-4">
-                      <button
-                        onClick={e => { e.stopPropagation(); setQrSku(item.variant.sku); }}
-                        title="Generate QR"
-                        className="p-1.5 rounded-lg text-gray-400 hover:text-blue-500 hover:bg-blue-50 transition-colors"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
-                        </svg>
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={e => { e.stopPropagation(); printBarcodeFromList(item.variant.sku); }}
+                          title="Print Barcode"
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-amber-600 hover:bg-amber-50 transition-colors"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 00-2 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={e => { e.stopPropagation(); setBarcodeSku(item.variant.sku); }}
+                          title="View Barcode"
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-blue-500 hover:bg-blue-50 transition-colors"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+                          </svg>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );

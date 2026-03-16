@@ -28,7 +28,7 @@ export class UserService {
     });
   }
 
-  async createUser(data: { name: string; email: string; password?: string; role: any }) {
+  async createUser(data: { name: string; email: string; password?: string; role: any }, callerRole?: "ADMIN" | "MANAGER" | "STAFF") {
     const existing = await this.prisma.user.findUnique({ where: { email: data.email } });
     if (existing) {
       throw new Error("User already exists");
@@ -42,6 +42,9 @@ export class UserService {
     const hashed = await bcrypt.hash(password, 12);
 
     const requestedRole = (data.role || "STAFF") as "ADMIN" | "MANAGER" | "STAFF";
+    if (callerRole === "MANAGER" && requestedRole !== "STAFF") {
+      throw new Error("Managers can only create users with the Staff role");
+    }
     if (requestedRole === "ADMIN") {
       const existingAdmin = await this.prisma.user.count({
         where: { organization_id: this.organizationId, role: "ADMIN" }
@@ -62,13 +65,17 @@ export class UserService {
     });
   }
 
-  async deleteUser(userId: string) {
+  async deleteUser(userId: string, callerRole?: "ADMIN" | "MANAGER" | "STAFF") {
       // Security check: must belong to the same organization
       const user = await this.prisma.user.findFirst({
-          where: { id: userId, organization_id: this.organizationId }
+          where: { id: userId, organization_id: this.organizationId },
+          select: { id: true, role: true }
       });
 
       if (!user) throw new Error("User not found");
+      if (callerRole === "MANAGER" && user.role !== "STAFF") {
+        throw new Error("Managers can only delete users with the Staff role");
+      }
       if (user.role === "ADMIN") {
           // Count admins in this org
           const adminCount = await this.prisma.user.count({
@@ -99,11 +106,11 @@ export class UserService {
     return assignments.map((a: any) => a.warehouse);
   }
 
-  async assignWarehouse(userId: string, warehouseId: string) {
+  async assignWarehouse(userId: string, warehouseId: string, callerRole?: "ADMIN" | "MANAGER" | "STAFF") {
     const [user, warehouse] = await Promise.all([
       this.prisma.user.findFirst({
         where: { id: userId, organization_id: this.organizationId },
-        select: { id: true }
+        select: { id: true, role: true }
       }),
       (this.prisma as any).warehouse.findFirst({
         where: { id: warehouseId, organization_id: this.organizationId },
@@ -113,6 +120,9 @@ export class UserService {
 
     if (!user || !warehouse) {
       throw new Error("User or warehouse not found");
+    }
+    if (callerRole === "MANAGER" && user.role !== "STAFF") {
+      throw new Error("Managers can only assign warehouses to users with the Staff role");
     }
 
     return (this.prisma as any).userWarehouse.upsert({
@@ -130,11 +140,11 @@ export class UserService {
     });
   }
 
-  async unassignWarehouse(userId: string, warehouseId: string) {
+  async unassignWarehouse(userId: string, warehouseId: string, callerRole?: "ADMIN" | "MANAGER" | "STAFF") {
     const [user, warehouse] = await Promise.all([
       this.prisma.user.findFirst({
         where: { id: userId, organization_id: this.organizationId },
-        select: { id: true }
+        select: { id: true, role: true }
       }),
       (this.prisma as any).warehouse.findFirst({
         where: { id: warehouseId, organization_id: this.organizationId },
@@ -144,6 +154,9 @@ export class UserService {
 
     if (!user || !warehouse) {
       throw new Error("User or warehouse not found");
+    }
+    if (callerRole === "MANAGER" && user.role !== "STAFF") {
+      throw new Error("Managers can only unassign warehouses from users with the Staff role");
     }
 
     return (this.prisma as any).userWarehouse.delete({

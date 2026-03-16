@@ -131,7 +131,7 @@ export class AuthController {
       },
     });
     if (!user) {
-      res.status(404).json({ error: "User not found" });
+      res.status(401).json({ error: "User not found or session invalid" });
       return;
     }
     res.json(toCamelCase(user));

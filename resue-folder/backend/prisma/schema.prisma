@@ -1,0 +1,441 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String    @unique
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  customers   Customer[]
+  products    Product[]
+  suppliers   Supplier[]
+  users       User[]
+  variants    Variant[]
+  warehouses  Warehouse[]
+  grns             Grn[]
+  gdns             Gdn[]
+  transfers        Transfer[]
+  adjustments      Adjustment[]
+  inventory        Inventory[]
+  inventory_ledger InventoryLedger[]
+  sales            Sale[]
+  credit_notes     CreditNote[]
+  purchases        Purchase[]
+
+  @@map("organizations")
+}
+
+model Supplier {
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  name            String
+  phone           String
+  email           String?
+  address         String?
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  grns            Grn[]
+  purchases       Purchase[]
+
+  @@index([organization_id])
+  @@map("suppliers")
+}
+
+model Customer {
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  name            String
+  phone           String
+  email           String?
+  address         String?
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  gdns            Gdn[]
+  sales           Sale[]
+
+  @@index([organization_id])
+  @@map("customers")
+}
+
+model Product {
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  name            String
+  sku             String
+  description     String?
+  created_at      DateTime     @default(now())
+  deleted_at      DateTime?
+  updated_at      DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  variants        Variant[]
+
+  @@unique([organization_id, sku])
+  @@index([organization_id])
+  @@index([name])
+  @@index([created_at])
+  @@map("products")
+}
+
+model Variant {
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  product_id      String       @db.Uuid
+  color           String
+  sku             String
+  created_at      DateTime     @default(now())
+  deleted_at      DateTime?
+  reorder_level   Int          @default(0)
+  valuation_rate  Decimal      @default(0) @db.Decimal(12, 4)
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  product         Product      @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  inventory       Inventory[]
+  inventory_ledger InventoryLedger[]
+  grn_items       GrnItem[]
+  gdn_items       GdnItem[]
+  transfer_items  TransferItem[]
+  adjustments     Adjustment[]
+  sale_items      SaleItem[]
+  purchase_items  PurchaseItem[]
+  credit_note_items CreditNoteItem[]
+
+  @@unique([organization_id, sku])
+  @@index([organization_id])
+  @@index([product_id])
+  @@map("variants")
+}
+
+model User {
+  id              String          @id @default(uuid()) @db.Uuid
+  name            String
+  email           String          @unique
+  password        String
+  created_at      DateTime        @default(now())
+  organization_id String?         @db.Uuid
+  role            UserRole        @default(STAFF)
+  warehouses      UserWarehouse[]
+  organization    Organization?   @relation(fields: [organization_id], references: [id])
+
+  @@map("users")
+}
+
+model Warehouse {
+  id                  String          @id @default(uuid()) @db.Uuid
+  organization_id     String          @db.Uuid
+  name                String
+  code                String
+  location            String?
+  created_at          DateTime        @default(now())
+  updated_at          DateTime        @updatedAt
+  user_assignments    UserWarehouse[]
+  organization        Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  inventory           Inventory[]
+  inventory_ledger    InventoryLedger[]
+  grns                Grn[]
+  gdns                Gdn[]
+  source_transfers    Transfer[]      @relation("TransferSource")
+  target_transfers    Transfer[]      @relation("TransferTarget")
+  adjustments        Adjustment[]
+  sales              Sale[]
+  purchases          Purchase[]
+
+  @@unique([organization_id, code])
+  @@index([organization_id])
+  @@map("warehouses")
+}
+
+model UserWarehouse {
+  id           String    @id @default(uuid()) @db.Uuid
+  user_id      String    @db.Uuid
+  warehouse_id String    @db.Uuid
+  user         User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  warehouse    Warehouse @relation(fields: [warehouse_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, warehouse_id])
+  @@index([user_id])
+  @@map("user_warehouses")
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  STAFF
+}
+
+model Inventory {
+  id              String    @id @default(uuid()) @db.Uuid
+  organization_id String    @db.Uuid
+  variant_id      String    @db.Uuid
+  warehouse_id    String    @db.Uuid
+  quantity        Int       @default(0)
+  reserved        Int       @default(0)
+  updated_at      DateTime  @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  variant         Variant   @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+  warehouse       Warehouse @relation(fields: [warehouse_id], references: [id], onDelete: Cascade)
+
+  @@unique([variant_id, warehouse_id])
+  @@index([organization_id])
+  @@index([warehouse_id])
+  @@index([variant_id])
+  @@map("inventory")
+}
+
+model InventoryLedger {
+  id              String    @id @default(uuid()) @db.Uuid
+  organization_id String    @db.Uuid
+  variant_id      String    @db.Uuid
+  warehouse_id    String    @db.Uuid
+  quantity        Int
+  type            String
+  reference_id    String?   @db.Uuid
+  created_at      DateTime  @default(now())
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  variant         Variant   @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+  warehouse       Warehouse @relation(fields: [warehouse_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id])
+  @@index([variant_id])
+  @@index([warehouse_id])
+  @@index([created_at])
+  @@map("inventory_ledger")
+}
+
+model Grn {
+  id              String    @id @default(uuid()) @db.Uuid
+  organization_id String    @db.Uuid
+  warehouse_id    String    @db.Uuid
+  supplier_id     String?   @db.Uuid
+  status          String    @default("DRAFT")
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+  items           GrnItem[]
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  warehouse       Warehouse @relation(fields: [warehouse_id], references: [id], onDelete: Cascade)
+  supplier        Supplier? @relation(fields: [supplier_id], references: [id], onDelete: SetNull)
+
+  @@index([organization_id])
+  @@index([warehouse_id])
+  @@index([supplier_id])
+  @@index([status])
+  @@map("grn")
+}
+
+model GrnItem {
+  id         String   @id @default(uuid()) @db.Uuid
+  grn_id     String   @db.Uuid
+  variant_id String   @db.Uuid
+  quantity   Int
+  grn        Grn      @relation(fields: [grn_id], references: [id], onDelete: Cascade)
+  variant    Variant  @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+
+  @@index([grn_id])
+  @@index([variant_id])
+  @@map("grn_items")
+}
+
+model Gdn {
+  id              String    @id @default(uuid()) @db.Uuid
+  organization_id String    @db.Uuid
+  warehouse_id    String    @db.Uuid
+  customer_id     String?   @db.Uuid
+  status          String    @default("DRAFT")
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+  items           GdnItem[]
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  warehouse       Warehouse @relation(fields: [warehouse_id], references: [id], onDelete: Cascade)
+  customer        Customer? @relation(fields: [customer_id], references: [id], onDelete: SetNull)
+
+  @@index([organization_id])
+  @@index([warehouse_id])
+  @@index([customer_id])
+  @@index([status])
+  @@map("gdn")
+}
+
+model GdnItem {
+  id         String   @id @default(uuid()) @db.Uuid
+  gdn_id     String   @db.Uuid
+  variant_id String   @db.Uuid
+  quantity   Int
+  gdn        Gdn      @relation(fields: [gdn_id], references: [id], onDelete: Cascade)
+  variant    Variant  @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+
+  @@index([gdn_id])
+  @@index([variant_id])
+  @@map("gdn_items")
+}
+
+model Transfer {
+  id                   String         @id @default(uuid()) @db.Uuid
+  organization_id      String         @db.Uuid
+  source_warehouse_id  String         @db.Uuid
+  target_warehouse_id  String         @db.Uuid
+  status               String         @default("DRAFT")
+  created_at           DateTime       @default(now())
+  updated_at           DateTime       @updatedAt
+  items                TransferItem[]
+  organization         Organization   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  source_warehouse     Warehouse      @relation("TransferSource", fields: [source_warehouse_id], references: [id], onDelete: Cascade)
+  target_warehouse     Warehouse      @relation("TransferTarget", fields: [target_warehouse_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id])
+  @@index([source_warehouse_id])
+  @@index([target_warehouse_id])
+  @@index([status])
+  @@map("transfers")
+}
+
+model TransferItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  transfer_id String   @db.Uuid
+  variant_id  String   @db.Uuid
+  quantity    Int
+  transfer    Transfer @relation(fields: [transfer_id], references: [id], onDelete: Cascade)
+  variant     Variant  @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+
+  @@index([transfer_id])
+  @@index([variant_id])
+  @@map("transfer_items")
+}
+
+model Adjustment {
+  id              String    @id @default(uuid()) @db.Uuid
+  organization_id String    @db.Uuid
+  warehouse_id    String    @db.Uuid
+  variant_id      String    @db.Uuid
+  quantity        Int
+  reason          String?
+  created_at      DateTime  @default(now())
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  warehouse       Warehouse @relation(fields: [warehouse_id], references: [id], onDelete: Cascade)
+  variant         Variant   @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id])
+  @@index([warehouse_id])
+  @@index([variant_id])
+  @@map("adjustments")
+}
+
+model Sale {
+  id              String    @id @default(uuid()) @db.Uuid
+  organization_id String    @db.Uuid
+  customer_id     String    @db.Uuid
+  warehouse_id    String    @db.Uuid
+  status          String    @default("DRAFT")
+  total_amount    Float     @default(0)
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  customer        Customer  @relation(fields: [customer_id], references: [id], onDelete: Restrict)
+  warehouse       Warehouse @relation(fields: [warehouse_id], references: [id], onDelete: Cascade)
+  items           SaleItem[]
+  payments        SalePayment[]
+  credit_notes    CreditNote[]
+
+  @@index([organization_id])
+  @@index([customer_id])
+  @@index([warehouse_id])
+  @@index([status])
+  @@map("sales")
+}
+
+model SaleItem {
+  id         String   @id @default(uuid()) @db.Uuid
+  sale_id    String   @db.Uuid
+  variant_id String   @db.Uuid
+  quantity   Int
+  price      Float    @default(0)
+  sale       Sale     @relation(fields: [sale_id], references: [id], onDelete: Cascade)
+  variant    Variant  @relation(fields: [variant_id], references: [id], onDelete: Restrict)
+
+  @@index([sale_id])
+  @@index([variant_id])
+  @@map("sale_items")
+}
+
+model SalePayment {
+  id        String   @id @default(uuid()) @db.Uuid
+  sale_id   String   @db.Uuid
+  amount    Float
+  paid_at   DateTime @default(now())
+  sale      Sale     @relation(fields: [sale_id], references: [id], onDelete: Cascade)
+
+  @@index([sale_id])
+  @@map("sale_payments")
+}
+
+model CreditNote {
+  id              String    @id @default(uuid()) @db.Uuid
+  organization_id String    @db.Uuid
+  sale_id         String    @db.Uuid
+  amount          Float     @default(0)
+  reason          String?
+  status          String    @default("DRAFT")
+  created_at      DateTime  @default(now())
+  items           CreditNoteItem[]
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  sale            Sale     @relation(fields: [sale_id], references: [id], onDelete: Restrict)
+
+  @@index([organization_id])
+  @@index([sale_id])
+  @@index([status])
+  @@map("credit_notes")
+}
+
+model CreditNoteItem {
+  id              String     @id @default(uuid()) @db.Uuid
+  credit_note_id  String     @db.Uuid
+  variant_id      String     @db.Uuid
+  quantity        Int
+  credit_note     CreditNote @relation(fields: [credit_note_id], references: [id], onDelete: Cascade)
+  variant         Variant    @relation(fields: [variant_id], references: [id], onDelete: Restrict)
+
+  @@index([credit_note_id])
+  @@index([variant_id])
+  @@map("credit_note_items")
+}
+
+model Purchase {
+  id              String    @id @default(uuid()) @db.Uuid
+  organization_id String    @db.Uuid
+  supplier_id     String    @db.Uuid
+  warehouse_id    String    @db.Uuid
+  status          String    @default("DRAFT")
+  total_amount    Float     @default(0)
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+  items           PurchaseItem[]
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  supplier        Supplier  @relation(fields: [supplier_id], references: [id], onDelete: Restrict)
+  warehouse       Warehouse @relation(fields: [warehouse_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id])
+  @@index([supplier_id])
+  @@index([warehouse_id])
+  @@index([status])
+  @@map("purchases")
+}
+
+model PurchaseItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  purchase_id String   @db.Uuid
+  variant_id  String   @db.Uuid
+  quantity    Int
+  cost        Float    @default(0)
+  purchase    Purchase @relation(fields: [purchase_id], references: [id], onDelete: Cascade)
+  variant     Variant  @relation(fields: [variant_id], references: [id], onDelete: Restrict)
+
+  @@index([purchase_id])
+  @@index([variant_id])
+  @@map("purchase_items")
+}

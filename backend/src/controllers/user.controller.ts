@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { BaseController } from "./BaseController.js";
 import { UserService } from "../services/user.service.js";
+import { AuthRequest } from "../middleware/auth.middleware.js";
 
 export class UserController extends BaseController {
   /**
@@ -25,7 +26,8 @@ export class UserController extends BaseController {
       const organizationId = this.getTenant(req);
       const service = new UserService(organizationId);
       const body = this.getBody(req);
-      const user = await service.createUser(body);
+      const callerRole = (req as AuthRequest).userRole as "ADMIN" | "MANAGER" | "STAFF" | undefined;
+      const user = await service.createUser(body, callerRole);
       return this.success(res, user, 201);
     } catch (error: any) {
       return this.handleError(res, error);
@@ -40,7 +42,8 @@ export class UserController extends BaseController {
           const id = req.params.id as string;
           const organizationId = this.getTenant(req);
           const service = new UserService(organizationId);
-          await service.deleteUser(id);
+          const callerRole = (req as AuthRequest).userRole as "ADMIN" | "MANAGER" | "STAFF" | undefined;
+          await service.deleteUser(id, callerRole);
           return res.status(204).send();
       } catch (error: any) {
           return this.handleError(res, error);
@@ -76,7 +79,8 @@ export class UserController extends BaseController {
         return res.status(400).json({ error: "warehouseId is required" });
       }
 
-      const assignment = await service.assignWarehouse(userId, warehouseId);
+      const callerRole = (req as AuthRequest).userRole as "ADMIN" | "MANAGER" | "STAFF" | undefined;
+      const assignment = await service.assignWarehouse(userId, warehouseId, callerRole);
 
       return this.success(res, assignment, 201);
     } catch (error: any) {
@@ -93,8 +97,9 @@ export class UserController extends BaseController {
       const warehouseId = req.params.warehouseId as string;
       const organizationId = this.getTenant(req);
       const service = new UserService(organizationId);
+      const callerRole = (req as AuthRequest).userRole as "ADMIN" | "MANAGER" | "STAFF" | undefined;
 
-      await service.unassignWarehouse(userId, warehouseId);
+      await service.unassignWarehouse(userId, warehouseId, callerRole);
 
       return res.status(204).send();
     } catch (error: any) {

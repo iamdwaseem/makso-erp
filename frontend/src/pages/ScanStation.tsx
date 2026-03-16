@@ -437,7 +437,7 @@ export function ScanStation() {
           </div>
 
           {cart.length === 0 ? (
-            <p className="text-sm text-gray-400">Scan a QR code or enter a SKU to add items.</p>
+            <p className="text-sm text-gray-400">Scan a barcode or enter a SKU to add items.</p>
           ) : (
             <div className="space-y-2">
               {cart.map(item => (
@@ -490,7 +490,7 @@ export function ScanStation() {
           )}
         </div>
         {scanHistory.length === 0 ? (
-          <p className="text-gray-400 text-sm">No checkouts yet. Scan a QR to start.</p>
+          <p className="text-gray-400 text-sm">No checkouts yet. Scan a barcode to start.</p>
         ) : (
           <div className="space-y-2 max-h-[600px] overflow-y-auto">
             {scanHistory.map((entry, i) => (

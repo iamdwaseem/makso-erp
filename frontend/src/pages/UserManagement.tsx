@@ -166,12 +166,14 @@ export function UserManagement() {
     }
   };
 
-  if (currentUser?.role !== "ADMIN") {
+  const canAccess = currentUser?.role === "ADMIN" || currentUser?.role === "MANAGER";
+  const isAdmin = currentUser?.role === "ADMIN";
+  if (!canAccess) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
         <span className="text-4xl mb-4">🚫</span>
         <h2 className="text-xl font-bold text-gray-800">Access Denied</h2>
-        <p className="text-gray-500">Only administrators can manage users.</p>
+        <p className="text-gray-500">Managers and administrators can manage users.</p>
       </div>
     );
   }
@@ -220,17 +222,19 @@ export function UserManagement() {
                   <div className="flex flex-wrap gap-2">
                     {user.role === "ADMIN" ? (
                       <span className="text-xs text-indigo-600 font-medium bg-indigo-50 px-2 py-1 rounded-lg">Full access to all warehouses</span>
-                    ) : (
+                    ) : (isAdmin || user.role === "STAFF") ? (
                       <>
                         {user.warehouses?.map(w => (
                           <div key={w.warehouse.id} className="group flex items-center gap-1.5 bg-gray-50 border border-gray-100 px-2 py-1 rounded-lg">
                             <span className="text-xs text-gray-700">{w.warehouse.name}</span>
-                            <button
-                              onClick={() => openUnassignConfirmModal(user, { id: w.warehouse.id, name: w.warehouse.name })}
-                              className="text-gray-400 hover:text-red-500 transition-colors"
-                            >
-                              ×
-                            </button>
+                            {(isAdmin || user.role === "STAFF") && (
+                              <button
+                                onClick={() => openUnassignConfirmModal(user, { id: w.warehouse.id, name: w.warehouse.name })}
+                                className="text-gray-400 hover:text-red-500 transition-colors"
+                              >
+                                ×
+                              </button>
+                            )}
                           </div>
                         ))}
                         <button
@@ -240,19 +244,27 @@ export function UserManagement() {
                           + Assign
                         </button>
                       </>
+                    ) : (
+                      <>
+                        {user.warehouses?.map(w => (
+                          <span key={w.warehouse.id} className="text-xs text-gray-700 bg-gray-50 border border-gray-100 px-2 py-1 rounded-lg">{w.warehouse.name}</span>
+                        ))}
+                      </>
                     )}
                   </div>
                 </div>
               </div>
 
               <div className="p-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-2">
-                <button
-                  disabled={user.id === currentUser?.id}
-                  onClick={() => openDeleteUserModal(user)}
-                  className="text-xs text-red-600 font-semibold hover:bg-red-50 px-3 py-1.5 rounded-lg disabled:opacity-30"
-                >
-                  Delete User
-                </button>
+                {(isAdmin || user.role === "STAFF") && (
+                  <button
+                    disabled={user.id === currentUser?.id}
+                    onClick={() => openDeleteUserModal(user)}
+                    className="text-xs text-red-600 font-semibold hover:bg-red-50 px-3 py-1.5 rounded-lg disabled:opacity-30"
+                  >
+                    Delete User
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -327,8 +339,8 @@ export function UserManagement() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
                 <select value={newRole} onChange={e => setNewRole(e.target.value as any)} className="w-full border border-gray-200 rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                   <option value="STAFF">User (Stock entry/exit only)</option>
-                  <option value="MANAGER">Moderator Admin</option>
-                  <option value="ADMIN">Superior Admin (Only 1 allowed)</option>
+                  {isAdmin && <option value="MANAGER">Moderator Admin</option>}
+                  {isAdmin && <option value="ADMIN">Superior Admin (Only 1 allowed)</option>}
                 </select>
               </div>
               <button disabled={submitting} className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition disabled:opacity-50 mt-4">

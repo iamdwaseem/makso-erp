@@ -21,77 +21,74 @@ export function LoginPage() {
       clearWarehouses();
       await login(email, password);
       navigate("/", { replace: true });
-    } catch (err: any) {
-      setError(err.message || "Login failed");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Login failed");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        {/* Logo / Brand */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-blue-600 rounded-2xl mb-4 shadow-lg shadow-blue-200">
-            <span className="text-white text-2xl">📦</span>
+    <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
+      <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
+        <div className="mb-8 text-center">
+          <div className="mx-auto flex min-h-[100px] w-full max-w-[220px] items-center justify-center rounded-xl p-4">
+            <img
+              src="/images/makso-logo.png"
+              alt="MAKSO General Trading L.L.C"
+              className="h-auto w-full object-contain"
+            />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">WareFlow</h1>
-          <p className="text-gray-500 text-sm mt-1">Sign in to your workspace</p>
+          <h1 className="mt-4 text-xl font-semibold text-slate-800">MAKSO General Trading L.L.C</h1>
+          <p className="mt-2 text-sm text-slate-500">Sign in to your account</p>
         </div>
-
-        {/* Card */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
-          <form onSubmit={handleSubmit} className="space-y-5" id="login-form">
-
-            {error && (
-              <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700 flex items-center gap-2">
-                <span>⚠️</span> {error}
-              </div>
-            )}
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5" htmlFor="login-email">
-                Email address
-              </label>
-              <input
-                id="login-email"
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-gray-900 text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
-              />
+        <form onSubmit={handleSubmit} className="space-y-5">
+          {error && (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
             </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-sm font-medium text-gray-700" htmlFor="login-password">
-                  Password
-                </label>
-              </div>
-              <input
-                id="login-password"
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-gray-900 text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
-              />
-            </div>
-
-            <button
-              id="login-submit"
-              type="submit"
-              disabled={loading}
-              className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-lg text-sm transition-colors shadow-sm shadow-blue-200"
-            >
-              {loading ? "Signing in…" : "Sign in"}
-            </button>
-          </form>
-        </div>
+          )}
+          <div>
+            <label htmlFor="email" className="mb-1 block text-sm font-medium text-slate-700">
+              Email
+            </label>
+            <input
+              id="email"
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="you@company.com"
+              required
+            />
+          </div>
+          <div>
+            <label htmlFor="password" className="mb-1 block text-sm font-medium text-slate-700">
+              Password
+            </label>
+            <input
+              id="password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="••••••••"
+              required
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 disabled:opacity-50"
+          >
+            {loading ? "Signing in…" : "Sign in"}
+          </button>
+        </form>
+        <p className="mt-6 text-center text-xs text-slate-500">
+          Use your organization email and password.
+        </p>
       </div>
     </div>
   );

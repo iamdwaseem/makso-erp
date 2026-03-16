@@ -2,6 +2,17 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../api";
 import { useWarehouseStore } from "../store/warehouseStore";
+import { StatCard } from "../components/dashboard/StatCard";
+import { FinanceCard } from "../components/dashboard/FinanceCard";
+import { DashboardLineChart } from "../components/dashboard/DashboardLineChart";
+import { DashboardBarChart } from "../components/dashboard/DashboardBarChart";
+import { DashboardPieChart } from "../components/dashboard/DashboardPieChart";
+import { CashBankTable } from "../components/dashboard/CashBankTable";
+import { useApi } from "../hooks/useApi";
+
+const CURRENCY = "AED";
+const formatMoney = (n: number) =>
+  n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " " + CURRENCY;
 
 interface DashboardStats {
   counts: {
@@ -12,6 +23,7 @@ interface DashboardStats {
     totalPurchases: number;
     totalSales: number;
     totalUnits: number;
+    lowStockCount?: number;
   };
   lowStock: any[];
   topStocked: any[];
@@ -22,23 +34,33 @@ interface LedgerEntry {
   id: string;
   action: "IN" | "OUT";
   quantity: number;
-  reference_type: string;
-  reference_id: string;
-  created_at: string;
+  referenceType: string;
+  referenceId: string;
+  createdAt: string;
 }
 
-// Inline ledger modal (same as Inventory page)
 function LedgerModal({ item, onClose }: { item: any; onClose: () => void }) {
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [loading, setLoading] = useState(true);
-
+  const variantId = item.variantId ?? item.variant?.id;
+  const normalize = (e: any): LedgerEntry => ({
+    id: e.id,
+    action: (e.action === "OUT" ? "OUT" : "IN") as "IN" | "OUT",
+    quantity: Number(e.quantity ?? 0),
+    referenceType: e.reference_type ?? e.referenceType ?? "",
+    referenceId: e.reference_id ?? e.referenceId ?? "",
+    createdAt: e.created_at ?? e.createdAt ?? "",
+  });
   useEffect(() => {
-    api.get(`/inventory/${item.variantId}/ledger`)
-      .then(r => {
-        // compute running balance
-        const asc = [...r.data].reverse();
+    if (!variantId) return;
+    api
+      .get(`/inventory/${variantId}/ledger`)
+      .then((r) => {
+        const raw = Array.isArray(r.data) ? r.data : [];
+        const entries = raw.map(normalize);
+        const asc = [...entries].reverse();
         let bal = 0;
-        const withBal = asc.map((e: LedgerEntry) => {
+        const withBal = asc.map((e: LedgerEntry & { balance?: number }) => {
           bal = e.action === "IN" ? bal + e.quantity : bal - e.quantity;
           return { ...e, balance: bal };
         });
@@ -46,372 +68,247 @@ function LedgerModal({ item, onClose }: { item: any; onClose: () => void }) {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [item.variantId]);
+  }, [variantId]);
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-      onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl flex flex-col max-h-[85vh] overflow-hidden"
-        onClick={e => e.stopPropagation()}>
-        <div className="px-6 py-5 border-b border-gray-100 bg-gray-50 flex items-start justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between border-b border-gray-100 bg-gray-50 px-6 py-5">
           <div>
             <h3 className="text-lg font-bold text-gray-900">
               {item.variant?.product?.name} — {item.variant?.color}
             </h3>
-            <p className="text-xs text-gray-400 font-mono mt-0.5">{item.variant?.sku}</p>
+            <p className="mt-0.5 text-xs font-mono text-gray-400">{item.variant?.sku}</p>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-full hover:bg-gray-200 text-gray-400 transition-colors">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <button type="button" onClick={onClose} className="rounded-full p-1.5 text-gray-400 transition-colors hover:bg-gray-200">
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-6">
           {loading ? (
-            <div className="py-16 text-center text-gray-400 text-sm">Loading history…</div>
+            <div className="py-16 text-center text-sm text-gray-400">Loading history…</div>
           ) : ledger.length === 0 ? (
-            <div className="py-16 text-center text-gray-400 text-sm">No movements recorded.</div>
+            <div className="py-16 text-center text-sm text-gray-400">No movements recorded.</div>
           ) : (
             <table className="min-w-full">
               <thead>
                 <tr className="border-b border-gray-100">
-                  {["Date & Time", "Action", "Reference", "Change", "Balance"].map(h => (
-                    <th key={h} className={`pb-3 text-xs font-medium text-gray-500 uppercase ${["Change","Balance"].includes(h) ? "text-right" : "text-left"}`}>{h}</th>
+                  {["Date & Time", "Action", "Reference", "Change", "Balance"].map((h) => (
+                    <th key={h} className={`pb-3 text-xs font-medium uppercase text-gray-500 ${["Change", "Balance"].includes(h) ? "text-right" : "text-left"}`}>
+                      {h}
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {ledger.map((e: any) => (
                   <tr key={e.id} className="hover:bg-gray-50">
-                    <td className="py-3 text-sm text-gray-600 pr-4">{new Date(e.createdAt).toLocaleString()}</td>
+                    <td className="py-3 pr-4 text-sm text-gray-600">{new Date(e.createdAt).toLocaleString()}</td>
                     <td className="py-3 pr-4">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${e.action === "IN" ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"}`}>{e.action}</span>
+                      <span className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase ${e.action === "IN" ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"}`}>
+                        {e.action}
+                      </span>
                     </td>
-                    <td className="py-3 pr-4 text-sm text-gray-500 capitalize">{e.referenceType.toLowerCase()} <span className="text-[10px] font-mono text-gray-400">{e.referenceId.slice(0,8)}</span></td>
-                    <td className={`py-3 pr-4 text-sm font-bold text-right ${e.action === "IN" ? "text-emerald-600" : "text-orange-600"}`}>{e.action === "IN" ? "+" : "−"}{e.quantity}</td>
-                    <td className="py-3 text-sm font-semibold text-right text-gray-700">{e.balance}</td>
+                    <td className="py-3 pr-4 text-sm capitalize text-gray-500">
+                      {e.referenceType.toLowerCase()} <span className="text-[10px] font-mono text-gray-400">{e.referenceId.slice(0, 8)}</span>
+                    </td>
+                    <td className={`py-3 pr-4 text-right text-sm font-bold ${e.action === "IN" ? "text-emerald-600" : "text-orange-600"}`}>
+                      {e.action === "IN" ? "+" : "−"}
+                      {e.quantity}
+                    </td>
+                    <td className="py-3 text-right text-sm font-semibold text-gray-700">{e.balance}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
         </div>
-        <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex justify-end">
-          <button onClick={onClose} className="px-5 py-2 bg-white border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50 shadow-sm">Close</button>
+        <div className="flex justify-end border-t border-gray-100 bg-gray-50 px-6 py-4">
+          <button type="button" onClick={onClose} className="rounded-xl border border-gray-200 bg-white px-5 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50">
+            Close
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
+type LinePoint = { month: string; sale: number; purchase: number };
+type BarPoint = { month: string; income: number; expense: number };
+
+const emptyPieData: { name: string; value: number; color?: string }[] = [];
+const emptyCashRows: { accountName: string; amount: string }[] = [];
+
 export function Dashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [ledgerItem, setLedgerItem] = useState<any>(null);
   const navigate = useNavigate();
-  const currentWarehouseId = useWarehouseStore(state => state.currentWarehouseId);
+  const currentWarehouseId = useWarehouseStore((s) => s.currentWarehouseId);
+
+  type TrendPoint = { date: string; value: number };
+  type GainLoss = { gain: number; loss: number };
+
+  const {
+    data: trendRaw,
+  } = useApi<TrendPoint[]>("/dashboard/inventory/trend", {
+    dependencies: [currentWarehouseId],
+  });
+
+  const {
+    data: gainLossRaw,
+  } = useApi<GainLoss>("/dashboard/inventory/gain-loss", {
+    dependencies: [currentWarehouseId],
+  });
 
   useEffect(() => {
     setLoading(true);
-    api.get("/dashboard/stats")
-      .then(res => setStats(res.data))
+    api
+      .get("/dashboard/stats")
+      .then((res) => setStats(res.data))
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [currentWarehouseId]);
 
-  if (loading) {
+  if (loading && !stats) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
-          <p className="text-sm text-gray-400">Loading dashboard…</p>
+      <div className="p-6">
+        <div className="mb-6 h-8 w-48 animate-pulse rounded bg-gray-200" />
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 xl:grid-cols-7">
+          {[1, 2, 3, 4, 5, 6, 7].map((i) => (
+            <div key={i} className="h-24 animate-pulse rounded-lg bg-gray-100" />
+          ))}
         </div>
+        <p className="mt-4 text-sm text-gray-500">Loading dashboard…</p>
       </div>
     );
   }
 
   if (!stats) {
-    return <div className="text-red-500 p-4 bg-red-50 rounded-xl text-sm">Failed to load dashboard. Is the backend running?</div>;
+    return (
+      <div className="p-4 text-sm text-red-700 rounded-xl bg-red-50">
+        Failed to load dashboard. Is the backend running?
+      </div>
+    );
   }
 
-  const maxInventoryQty = Math.max(...stats.topStocked.map(i => i.quantity), 1);
+  const c = stats.counts;
+  const lowCount = c.lowStockCount ?? stats.lowStock.length;
 
-  // Critical items (0 stock) - we can estimate from lowStock or just show low stock
-  const critical = stats.lowStock.filter(i => i.quantity === 0);
+  const stockTrendData: LinePoint[] =
+    trendRaw && Array.isArray(trendRaw) && trendRaw.length
+      ? trendRaw.map((p) => ({
+          month: p.date,
+          sale: p.value,
+          purchase: 0,
+        }))
+      : [{ month: "—", sale: 0, purchase: 0 }];
 
-  const statCards = [
-    {
-      label: "Products",
-      value: stats.counts.totalProducts,
-      sub: `${stats.counts.totalVariants} variants`,
-      icon: "📦",
-      bg: "bg-blue-50",
-      text: "text-blue-700",
-      border: "border-blue-100",
-      clickable: false,
-    },
-    {
-      label: "Units in Stock",
-      value: stats.counts.totalUnits,
-      sub: "across all variants",
-      icon: "📊",
-      bg: "bg-emerald-50",
-      text: "text-emerald-700",
-      border: "border-emerald-100",
-      clickable: true,
-      to: "/inventory",
-    },
-    {
-      label: "Suppliers",
-      value: stats.counts.totalSuppliers,
-      sub: "active partners",
-      icon: "🏭",
-      bg: "bg-amber-50",
-      text: "text-amber-700",
-      border: "border-amber-100",
-      clickable: false,
-    },
-    {
-      label: "Customers",
-      value: stats.counts.totalCustomers,
-      sub: "on record",
-      icon: "👥",
-      bg: "bg-pink-50",
-      text: "text-pink-700",
-      border: "border-pink-100",
-      clickable: false,
-    },
-    {
-      label: "Purchases",
-      value: stats.counts.totalPurchases,
-      sub: "total orders",
-      icon: "📥",
-      bg: "bg-cyan-50",
-      text: "text-cyan-700",
-      border: "border-cyan-100",
-      clickable: true,
-      to: "/history",
-    },
-    {
-      label: "Sales",
-      value: stats.counts.totalSales,
-      sub: "total orders",
-      icon: "📤",
-      bg: "bg-violet-50",
-      text: "text-violet-700",
-      border: "border-violet-100",
-      clickable: true,
-      to: "/history",
-    },
+  const salePurchaseData: LinePoint[] = [
+    { month: "Current", sale: c.totalSales, purchase: c.totalPurchases },
   ];
 
+  const gainLossChartData: BarPoint[] =
+    gainLossRaw && typeof gainLossRaw.gain === "number" && typeof gainLossRaw.loss === "number"
+      ? [
+          { month: "Current", income: gainLossRaw.gain, expense: gainLossRaw.loss },
+        ]
+      : [{ month: "—", income: 0, expense: 0 }];
+
+  // KPI cards (resue-style)
+  const kpiCards = [
+    { value: String(c.totalUnits), label: "TOTAL STOCK (UNITS)", variant: "dark" as const },
+    { value: String(c.totalSales), label: "TOTAL SALES", variant: "green" as const },
+    { value: String(c.totalPurchases), label: "TOTAL PURCHASES", variant: "yellow" as const },
+    { value: String(lowCount), label: "LOW STOCK ITEMS", variant: "red" as const },
+    { value: String(c.totalProducts), label: "PRODUCTS", variant: "white" as const },
+    { value: String(c.totalVariants), label: "VARIANTS", variant: "white" as const },
+    { value: String(c.totalSuppliers), label: "SUPPLIERS", variant: "white" as const },
+  ];
+
+  // Inventory by product (from topStocked)
+  const productSums = stats.topStocked.reduce<Record<string, number>>((acc, i) => {
+    const name = i.variant?.product?.name ?? "Product";
+    acc[name] = (acc[name] ?? 0) + (i.quantity ?? 0);
+    return acc;
+  }, {});
+  const pieData = Object.entries(productSums)
+    .slice(0, 8)
+    .map(([name, value]) => ({ name: name.slice(0, 20), value }));
+
+  const financeCards = [
+    { title: "OPEN SALE INVOICES", value: "—", variant: "dark" as const, actions: [{ label: "+ NEW", type: "new" as const }, { label: "LIST", type: "list" as const }] },
+    { title: "OPEN PURCHASE INVOICES", value: "—", variant: "dark" as const, actions: [{ label: "+ NEW", type: "new" as const }, { label: "LIST", type: "list" as const }] },
+    { title: "TOTAL SALES", value: String(c.totalSales), variant: "green" as const },
+    { title: "TOTAL PURCHASES", value: String(c.totalPurchases), variant: "yellow" as const },
+    { title: "STOCK UNITS", value: String(c.totalUnits), variant: "white" as const },
+  ];
+
+  const maxInventoryQty = Math.max(...stats.topStocked.map((i) => i.quantity), 1);
+  const critical = stats.lowStock.filter((i) => i.quantity === 0);
+
   return (
-    <div className="space-y-6">
+    <div className="p-6">
       {ledgerItem && <LedgerModal item={ledgerItem} onClose={() => setLedgerItem(null)} />}
 
-      {/* ── Stat Cards ──────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-        {statCards.map(card => {
-          const inner = (
-            <>
-              <div className="flex items-start justify-between mb-3">
-                <span className="text-2xl">{card.icon}</span>
-                {card.clickable && (
-                  <svg className={`w-4 h-4 ${card.text} opacity-0 group-hover:opacity-100 transition-opacity`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                  </svg>
-                )}
-              </div>
-              <div className={`text-2xl font-bold ${card.text}`}>{card.value}</div>
-              <div className="text-xs font-semibold text-gray-700 mt-0.5">{card.label}</div>
-              <div className="text-xs text-gray-400 mt-0.5">{card.sub}</div>
-            </>
-          );
-
-          return card.clickable ? (
-            <button
-              key={card.label}
-              onClick={() => navigate(card.to!)}
-              className={`group text-left bg-white rounded-xl border ${card.border} p-4 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer`}
-            >
-              {inner}
-            </button>
-          ) : (
-            <div
-              key={card.label}
-              className={`bg-white rounded-xl border ${card.border} p-4 shadow-sm`}
-            >
-              {inner}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* ── Row 2: Low stock + Recent activity ──────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-        {/* Low Stock Alerts */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">⚠️</span>
-              <h3 className="text-sm font-bold text-gray-800">Low Stock Alerts</h3>
-              <span className="text-xs bg-red-100 text-red-700 font-semibold px-2 py-0.5 rounded-full">{stats.lowStock.length}</span>
-            </div>
-            <button onClick={() => navigate("/inventory")}
-              className="text-xs text-blue-600 hover:underline font-medium">
-              View inventory →
-            </button>
-          </div>
-
-          {stats.lowStock.length === 0 ? (
-            <div className="px-5 py-10 text-center">
-              <div className="text-3xl mb-2">✅</div>
-              <p className="text-sm text-gray-400">All stock levels are healthy</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-gray-50 max-h-72 overflow-y-auto">
-              {stats.lowStock.map(item => (
-                <button
-                  key={item.id}
-                  onClick={() => setLedgerItem(item)}
-                  className="w-full px-5 py-3 flex items-center justify-between hover:bg-red-50 transition-colors group text-left"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{item.variant?.product?.name}</p>
-                    <p className="text-xs text-gray-400 font-mono">{item.variant?.color} · {item.variant?.sku}</p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0 ml-3">
-                    <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${
-                      item.quantity === 0 ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"
-                    }`}>
-                      {item.quantity === 0 ? "Out of stock" : `${item.quantity} left`}
-                    </span>
-                    <svg className="w-4 h-4 text-gray-300 group-hover:text-red-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                    </svg>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Recent Activity Feed */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">⚡</span>
-              <h3 className="text-sm font-bold text-gray-800">Recent Movements</h3>
-            </div>
-            <button onClick={() => navigate("/history")}
-              className="text-xs text-blue-600 hover:underline font-medium">
-              Full history →
-            </button>
-          </div>
-
-          {stats.recentActivity.length === 0 ? (
-            <div className="px-5 py-10 text-center text-sm text-gray-400">No recent activity.</div>
-          ) : (
-            <div className="divide-y divide-gray-50 max-h-72 overflow-y-auto">
-              {stats.recentActivity.map(entry => (
-                <div key={entry.id}
-                  className="px-5 py-3 flex items-center gap-3 hover:bg-gray-50 transition-colors">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0 ${
-                      entry.action === "IN" ? "bg-emerald-500" : "bg-orange-500"
-                  }`}>
-                    {entry.action === "IN" ? "↓" : "↑"}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">
-                      {entry.variant?.product?.name}
-                      <span className="text-gray-400 font-normal"> · {entry.variant?.color}</span>
-                    </p>
-                    <p className="text-xs text-gray-400">
-                      <span className="capitalize">{entry.referenceType?.toLowerCase()}</span>
-                      {" · "}{new Date(entry.createdAt).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}
-                    </p>
-                  </div>
-                  <span className={`text-sm font-bold shrink-0 ${entry.action === "IN" ? "text-emerald-600" : "text-orange-600"}`}>
-                    {entry.action === "IN" ? "+" : "−"}{entry.quantity}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+      {/* Header (resue-style) */}
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <h1 className="text-2xl font-bold tracking-tight text-gray-900">DASHBOARD</h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm text-gray-600">All Employees</span>
+          <select className="rounded border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700">
+            <option>All</option>
+          </select>
+          <select className="rounded border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700">
+            <option>Last 12 months</option>
+            <option>This month</option>
+            <option>Last month</option>
+          </select>
         </div>
       </div>
 
-      {/* ── Stock Health Bars ───────────────────────────────────────────────── */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-lg">📊</span>
-            <h3 className="text-sm font-bold text-gray-800">Stock Health Overview</h3>
-            <span className="text-xs text-gray-400">— click any row to view ledger</span>
-          </div>
-          <button onClick={() => navigate("/inventory")} className="text-xs text-blue-600 hover:underline font-medium">
-            Full inventory →
-          </button>
+      {/* KPI StatCards */}
+      <section className="mb-8">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+          {kpiCards.map((card) => (
+            <StatCard key={card.label} value={card.value} label={card.label} variant={card.variant} />
+          ))}
         </div>
+      </section>
 
-        <div className="divide-y divide-gray-50">
-          {stats.topStocked.map(item => {
-            const pct = Math.max((item.quantity / maxInventoryQty) * 100, 0.5);
-            const isOut = item.quantity === 0;
-            const isLow = !isOut && item.quantity < 10;
-            const barCls = isOut ? "bg-red-400" : isLow ? "bg-amber-400" : "bg-emerald-400";
-            const textCls = isOut ? "text-red-600" : isLow ? "text-amber-600" : "text-emerald-600";
-            const badgeCls = isOut ? "bg-red-100 text-red-700" : isLow ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700";
-            const badgeLabel = isOut ? "Out of Stock" : isLow ? "Low" : "OK";
+      {/* Charts row */}
+      <section className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <DashboardLineChart
+          data={stockTrendData}
+          title="STOCK LEVEL (INVENTORY TREND)"
+          nameFirst="Stock Level"
+          nameSecond=" "
+          valueSuffix=""
+        />
+        <DashboardLineChart data={salePurchaseData} title="SALE AND PURCHASE" valueSuffix="" />
+        <DashboardBarChart data={gainLossChartData} title="INVENTORY GAIN AND LOSS" />
+      </section>
 
-            return (
-              <button
-                key={item.id}
-                onClick={() => setLedgerItem(item)}
-                className="w-full px-5 py-3 hover:bg-gray-50 transition-colors group text-left"
-              >
-                <div className="flex items-center gap-3">
-                  {/* Product info */}
-                  <div className="w-44 shrink-0 min-w-0">
-                    <p className="text-sm font-medium text-gray-800 truncate">{item.variant?.product?.name}</p>
-                    <p className="text-xs text-gray-400 truncate">{item.variant?.color} · <span className="font-mono">{item.variant?.sku}</span></p>
-                  </div>
-
-                  {/* Bar */}
-                  <div className="flex-1 h-2.5 bg-gray-100 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-500 ${barCls}`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-
-                  {/* Qty + badge */}
-                  <div className="flex items-center gap-2 shrink-0 w-36 justify-end">
-                    <span className={`text-sm font-bold ${textCls}`}>{item.quantity}</span>
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${badgeCls}`}>{badgeLabel}</span>
-                    <svg className="w-4 h-4 text-gray-200 group-hover:text-blue-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                    </svg>
-                  </div>
-                </div>
-              </button>
-            );
-          })}
+      {/* Finance cards */}
+      <section className="mb-8">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {financeCards.map((card) => (
+            <FinanceCard key={card.title} title={card.title} value={card.value} variant={card.variant} actions={card.actions} />
+          ))}
         </div>
+      </section>
 
-        {/* Critical / out of stock strip at the bottom if any */}
-        {critical.length > 0 && (
-          <div className="px-5 py-3 bg-red-50 border-t border-red-100 flex items-center justify-between">
-            <p className="text-xs font-medium text-red-600">
-              🚫 {critical.length} variant{critical.length !== 1 ? "s" : ""} out of stock
-            </p>
-            <button onClick={() => navigate("/inventory")} className="text-xs text-red-600 hover:underline font-medium">
-              Restock →
-            </button>
-          </div>
-        )}
-      </div>
+      {/* Pie + Cash table */}
+      <section className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <DashboardPieChart data={pieData.length ? pieData : emptyPieData} title="INVENTORY BY PRODUCT" />
+        <div className="lg:col-span-2">
+          <CashBankTable rows={emptyCashRows} total="—" title="CASH / CASH EQUIVALENTS" />
+        </div>
+      </section>
+
+      {/* Inventory-specific low stock and movements moved to Inventory Dashboard */}
     </div>
   );
 }

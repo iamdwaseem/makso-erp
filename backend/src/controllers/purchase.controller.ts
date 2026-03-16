@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { PurchaseService } from "../services/purchase.service.js";
-import { purchaseSchema } from "../validators/purchase.validator.js";
+import { purchaseSchema, purchaseUpdateSchema, purchaseImportSchema } from "../validators/purchase.validator.js";
 import { BaseController } from "./BaseController.js";
 
 export class PurchaseController extends BaseController {
@@ -45,5 +45,39 @@ export class PurchaseController extends BaseController {
     } catch (error: any) {
       return this.handleError(res, error);
     }
-  }
+  };
+
+  updatePurchase = async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id as string;
+      const validatedData = purchaseUpdateSchema.parse(this.getBody(req));
+      const service = this.getService(req);
+      const purchase = await service.updatePurchase(id, validatedData);
+      return res.status(200).json(purchase);
+    } catch (error: any) {
+      return this.handleError(res, error, "Purchase not found");
+    }
+  };
+
+  deletePurchase = async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id as string;
+      const service = this.getService(req);
+      await service.deletePurchase(id);
+      return res.status(204).send();
+    } catch (error: any) {
+      return this.handleError(res, error, "Purchase not found");
+    }
+  };
+
+  importFromCsv = async (req: Request, res: Response) => {
+    try {
+      const validatedData = purchaseImportSchema.parse(this.getBody(req));
+      const service = this.getService(req);
+      const purchase = await service.importFromCsv(validatedData);
+      return res.status(201).json(purchase);
+    } catch (error: any) {
+      return this.handleError(res, error);
+    }
+  };
 }

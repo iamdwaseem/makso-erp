@@ -167,19 +167,29 @@ async function main() {
     id: crypto.randomUUID(),
     organization_id: org.id,
     supplier_id: suppliersData[i].id,
+    warehouse_id: warehouses[i % warehouses.length].id,
     invoice_number: `PUR-${String(i + 1).padStart(6, "0")}`,
     purchase_date: new Date(Date.now() - i * 60000),
-    created_at: new Date(Date.now() - i * 60000)
+    created_at: new Date(Date.now() - i * 60000),
+    updated_at: new Date(Date.now() - i * 60000),
+    status: "SUBMITTED" as const,
   }));
   await createManyInBatches(prisma.purchase, purchasesData);
 
+  const firstUserId = usersData[0].id;
   const salesData = Array.from({ length: TARGET_COUNT }).map((_, i) => ({
     id: crypto.randomUUID(),
     organization_id: org.id,
     customer_id: customersData[i].id,
+    warehouse_id: warehouses[i % warehouses.length].id,
     invoice_number: `SAL-${String(i + 1).padStart(6, "0")}`,
     sale_date: new Date(Date.now() - i * 45000),
-    created_at: new Date(Date.now() - i * 45000)
+    created_at: new Date(Date.now() - i * 45000),
+    updated_at: new Date(Date.now() - i * 45000),
+    status: "SUBMITTED" as const,
+    created_by: firstUserId,
+    payment_type: i % 2 === 0 ? "CASH" : "CREDIT",
+    total_amount: (i % 10 + 1) * 100,
   }));
   await createManyInBatches(prisma.sale, salesData);
 

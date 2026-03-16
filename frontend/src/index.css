@@ -7,10 +7,32 @@ body {
   display: flex;
   min-width: 320px;
   min-height: 100vh;
-  background-color: #f3f4f6;
+  background: linear-gradient(145deg, #0f0a1f 0%, #1a0f2e 25%, #16213e 50%, #1a1a2e 75%, #0f172a 100%);
   color: #111827;
+  position: relative;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: radial-gradient(ellipse 80% 50% at 20% 80%, rgba(168, 85, 247, 0.15) 0%, transparent 50%),
+    radial-gradient(ellipse 60% 40% at 80% 20%, rgba(59, 130, 246, 0.12) 0%, transparent 50%);
+  pointer-events: none;
+  z-index: 0;
 }
 
 #root {
   width: 100%;
+  position: relative;
+  z-index: 1;
+}
+
+/* Frosted glass panels */
+.glass-card {
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
 }
