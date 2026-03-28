@@ -19,6 +19,8 @@ import authRoutes       from "../src/routes/auth.routes.js";
 import warehouseRoutes  from "../src/routes/warehouse.routes.js";
 import userRoutes       from "../src/routes/user.routes.js";
 import historyRoutes    from "../src/routes/history.routes.js";
+import updateRequestRoutes from "../src/routes/updateRequest.routes.js";
+import skuHistoryRoutes from "../src/routes/skuHistory.routes.js";
 import { authenticate } from "../src/middleware/auth.middleware.js";
 import { resolveTenant } from "../src/middleware/tenant.middleware.js";
 import { authorizeWarehouseAccess } from "../src/middleware/warehouseAccess.middleware.js";
@@ -46,6 +48,8 @@ export function buildApp() {
   app.use("/api", warehouseRoutes);
   app.use("/api", userRoutes);
   app.use("/api", historyRoutes);
+  app.use("/api", updateRequestRoutes);
+  app.use("/api", skuHistoryRoutes);
 
   return app;
 }
@@ -55,8 +59,9 @@ export async function cleanDb() {
   const tables = [
     "dashboard_metrics", "scan_logs", "inventory_ledger", "inventory_summaries",
     "inventory", "purchase_items", "sale_items", "purchases", "sales",
-    "variants", "products", "customers", "suppliers", "user_warehouses",
-    "warehouses", "users", "organizations"
+    "transfer_items", "transfers",
+    "variants", "products", "customers", "suppliers", "update_requests", "sku_history", "user_warehouses",
+    "warehouses", "users", "organizations",
   ];
 
   for (const table of tables) {

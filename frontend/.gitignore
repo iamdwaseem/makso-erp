@@ -5,6 +5,9 @@ node_modules
 .env.*.local
 dist/
 *.tsbuildinfo
+# Vite / tsc emit next to vite.config.ts (do not commit)
+vite.config.js
+vite.config.d.ts
 test-results/
 playwright-report/
 coverage/

@@ -11,10 +11,11 @@ import { SearchCombobox } from "../components/SearchCombobox";
 interface CartItem {
   id: string; // uuid for React key
   variantId: string;
-  quantity: number;
+  /** Empty until the user enters a quantity (no default 0/1). */
+  quantity: string;
 }
 
-const makeItem = (): CartItem => ({ id: crypto.randomUUID(), variantId: "", quantity: 1 });
+const makeItem = (): CartItem => ({ id: crypto.randomUUID(), variantId: "", quantity: "" });
 
 export function StockEntry() {
   const [mode, setMode] = useState<"existing" | "new" | "variant">("existing");
@@ -38,12 +39,14 @@ export function StockEntry() {
   // ── New product (single flow) ────────────────────────────────────────────
   const [productName, setProductName] = useState("");
   const [color, setColor] = useState("");
-  const [newQty, setNewQty] = useState(1);
+  const [size, setSize] = useState("");
+  const [newQty, setNewQty] = useState("");
 
   // ── Add variant flow ─────────────────────────────────────────────────────
   const [selectedProduct, setSelectedProduct] = useState("");
   const [addVarColor, setAddVarColor] = useState("");
-  const [addVarQty, setAddVarQty] = useState(1);
+  const [addVarSize, setAddVarSize] = useState("");
+  const [addVarQty, setAddVarQty] = useState("");
 
   const [qrLabel, setQrLabel] = useState<{ variantId: string, sku: string, productName: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -64,15 +67,20 @@ export function StockEntry() {
       const variant = res.data;
       setCart(prev => {
         if (prev.length === 1 && !prev[0].variantId) {
-          return [{ ...prev[0], variantId: variant.id, quantity: 1 }];
+          return [{ ...prev[0], variantId: variant.id, quantity: "1" }];
         }
-        
+
         const existingRow = prev.find(r => r.variantId === variant.id);
         if (existingRow) {
-          return prev.map(r => r.id === existingRow.id ? { ...r, quantity: r.quantity + 1 } : r);
+          return prev.map(r => {
+            if (r.id !== existingRow.id) return r;
+            const n = parseInt(String(r.quantity).trim(), 10);
+            const next = (Number.isFinite(n) ? n : 0) + 1;
+            return { ...r, quantity: String(next) };
+          });
         }
-        
-        return [...prev, { id: crypto.randomUUID(), variantId: variant.id, quantity: 1 }];
+
+        return [...prev, { id: crypto.randomUUID(), variantId: variant.id, quantity: "1" }];
       });
     }).catch(err => {
       console.error(`Scan lookup failed: ${err.message}`);
@@ -99,9 +107,16 @@ export function StockEntry() {
   // ── Submit: existing stock-in (multi-item) ───────────────────────────────
   const handleExistingStockIn = async () => {
     if (currentWarehouseId === "all") { alert("Please select a specific warehouse in the header to receive stock."); return; }
-    const validItems = cart.filter(r => r.variantId && r.quantity >= 1);
-    if (validItems.length === 0) { alert("Add at least one product variant"); return; }
-    if (cart.some(r => r.variantId && r.quantity < 1)) { alert("All quantities must be ≥ 1"); return; }
+    const parsed = cart.map((r) => ({
+      ...r,
+      qtyNum: parseInt(String(r.quantity).trim(), 10),
+    }));
+    const validItems = parsed.filter((r) => r.variantId && Number.isFinite(r.qtyNum) && r.qtyNum > 0);
+    if (validItems.length === 0) { alert("Add at least one line with a variant and a quantity greater than zero."); return; }
+    if (parsed.some((r) => r.variantId && (!Number.isFinite(r.qtyNum) || r.qtyNum <= 0))) {
+      alert("Every line with a variant needs a quantity greater than zero.");
+      return;
+    }
     setSubmitting(true);
     try {
       const supplierId = await getOrCreateSupplier();
@@ -109,7 +124,7 @@ export function StockEntry() {
       await api.post("/purchases", {
         supplierId: supplierId,
         warehouseId: currentWarehouseId,
-        items: validItems.map(r => ({ variantId: r.variantId, quantity: r.quantity })),
+        items: validItems.map((r) => ({ variantId: r.variantId, quantity: r.qtyNum })),
       });
       setCart([makeItem()]);
       resetSupplier();
@@ -121,16 +136,22 @@ export function StockEntry() {
   // ── Submit: new product ──────────────────────────────────────────────────
   const handleNewProductStockIn = async () => {
     if (currentWarehouseId === "all") { alert("Please select a specific warehouse in the header to receive stock."); return; }
-    if (!productName || !color) { alert("Fill in all product fields"); return; }
+    if (!productName.trim() || !color.trim()) { alert("Product name and color are required"); return; }
+    const q = parseInt(String(newQty).trim(), 10);
+    if (!Number.isFinite(q) || q <= 0) { alert("Enter a quantity greater than zero"); return; }
     setSubmitting(true);
     try {
       const supplierId = await getOrCreateSupplier();
       if (!supplierId) { setSubmitting(false); return; }
-      const productRes = await api.post("/products", { name: productName });
-      const variantRes = await api.post("/variants", { productId: productRes.data.id, color });
-      await api.post("/purchases", { supplierId: supplierId, warehouseId: currentWarehouseId, items: [{ variantId: variantRes.data.id, quantity: newQty }] });
+      const productRes = await api.post("/products", { name: productName.trim() });
+      const variantRes = await api.post("/variants", {
+        productId: productRes.data.id,
+        color: color.trim(),
+        ...(size.trim() ? { size: size.trim() } : {}),
+      });
+      await api.post("/purchases", { supplierId: supplierId, warehouseId: currentWarehouseId, items: [{ variantId: variantRes.data.id, quantity: q }] });
       setQrLabel({ variantId: variantRes.data.id, sku: variantRes.data.sku, productName: productRes.data.name });
-      setProductName(""); setColor(""); setNewQty(1);
+      setProductName(""); setColor(""); setSize(""); setNewQty("");
       resetSupplier();
     } catch (err: any) { alert(err.response?.data?.error || err.message); }
     setSubmitting(false);
@@ -139,17 +160,23 @@ export function StockEntry() {
   // ── Submit: add variant ──────────────────────────────────────────────────
   const handleAddVariantStockIn = async () => {
     if (currentWarehouseId === "all") { alert("Please select a specific warehouse in the header to receive stock."); return; }
-    if (!selectedProduct || !addVarColor) { alert("Fill in all variant fields"); return; }
+    if (!selectedProduct || !addVarColor.trim()) { alert("Product and color are required"); return; }
+    const q = parseInt(String(addVarQty).trim(), 10);
+    if (!Number.isFinite(q) || q <= 0) { alert("Enter a quantity greater than zero"); return; }
     setSubmitting(true);
     try {
       const supplierId = await getOrCreateSupplier();
       if (!supplierId) { setSubmitting(false); return; }
-      const variantRes = await api.post("/variants", { productId: selectedProduct, color: addVarColor });
-      await api.post("/purchases", { supplierId: supplierId, warehouseId: currentWarehouseId, items: [{ variantId: variantRes.data.id, quantity: addVarQty }] });
+      const variantRes = await api.post("/variants", {
+        productId: selectedProduct,
+        color: addVarColor.trim(),
+        ...(addVarSize.trim() ? { size: addVarSize.trim() } : {}),
+      });
+      await api.post("/purchases", { supplierId: supplierId, warehouseId: currentWarehouseId, items: [{ variantId: variantRes.data.id, quantity: q }] });
       const productRes = await api.get(`/products/${selectedProduct}`);
       const pName = productRes.data.name || "Product";
       setQrLabel({ variantId: variantRes.data.id, sku: variantRes.data.sku, productName: pName });
-      setSelectedProduct(""); setAddVarColor(""); setAddVarQty(1);
+      setSelectedProduct(""); setAddVarColor(""); setAddVarSize(""); setAddVarQty("");
       resetSupplier();
     } catch (err: any) { alert(err.response?.data?.error || err.message); }
     setSubmitting(false);
@@ -167,7 +194,7 @@ export function StockEntry() {
   };
 
   // Cart total items
-  const cartCount = cart.filter(r => r.variantId).length;
+  const cartCount = cart.filter((r) => r.variantId).length;
 
   const supplierSection = (
     <div>
@@ -257,15 +284,21 @@ export function StockEntry() {
               <div key={row.id} className="grid grid-cols-[1fr_100px_36px] gap-2 items-center">
                 <SearchCombobox
                   endpoint="/variants"
-                  mapItem={(v: any) => ({ id: v.id, label: `${v.product?.name} — ${v.color} (${v.sku})` })}
+                  mapItem={(v: any) => ({
+                    id: v.id,
+                    label: `${v.product?.name} — ${v.color}${v.size ? ` / ${v.size}` : ""} (${v.sku})`,
+                  })}
                   value={row.variantId}
                   onChange={id => setCartItem(row.id, { variantId: id })}
                   placeholder={`Item ${idx + 1}...`}
                   accentClass="focus:border-blue-500"
                 />
                 <input
-                  type="number" min="1" value={row.quantity}
-                  onChange={e => setCartItem(row.id, { quantity: parseInt(e.target.value) || 1 })}
+                  type="number"
+                  min={1}
+                  placeholder="Qty"
+                  value={row.quantity}
+                  onChange={(e) => setCartItem(row.id, { quantity: e.target.value })}
                   className="border border-gray-300 rounded-lg p-2.5 text-sm text-center focus:border-blue-500 outline-none w-full"
                 />
                 <button
@@ -312,15 +345,21 @@ export function StockEntry() {
                 placeholder="Search product..." accentClass="focus:border-indigo-500" />
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <input value={addVarColor} onChange={e => setAddVarColor(e.target.value)} placeholder="Color/Size * (e.g. Red)"
-                className="rounded-lg border border-gray-300 p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
-              <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-2.5 text-xs text-indigo-400 flex items-center">
-                SKU auto-generated from product + colour
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Color *</label>
+                <input value={addVarColor} onChange={(e) => setAddVarColor(e.target.value)} placeholder="e.g. Red"
+                  className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Size</label>
+                <input value={addVarSize} onChange={(e) => setAddVarSize(e.target.value)} placeholder="e.g. M (optional)"
+                  className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
               </div>
             </div>
+            <p className="text-xs text-indigo-600">SKU is auto-generated from product, color, and size.</p>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Initial Quantity</label>
-              <input type="number" min="1" value={addVarQty} onChange={e => setAddVarQty(parseInt(e.target.value) || 1)}
+              <label className="block text-sm font-medium text-gray-700 mb-1">Quantity *</label>
+              <input type="number" min={1} placeholder="Enter quantity" value={addVarQty} onChange={(e) => setAddVarQty(e.target.value)}
                 className="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
             </div>
             {supplierSection}
@@ -341,18 +380,21 @@ export function StockEntry() {
             <input value={productName} onChange={e => setProductName(e.target.value)} placeholder="Product Name *"
               className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:ring-2 focus:ring-green-500 outline-none" />
             <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-lg border border-dashed border-green-200 bg-green-50 p-2.5 text-xs text-green-500 flex items-center">
-                Base SKU auto-generated from name
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Color *</label>
+                <input value={color} onChange={(e) => setColor(e.target.value)} placeholder="e.g. Black"
+                  className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:ring-2 focus:ring-green-500 outline-none" />
               </div>
-              <input value={color} onChange={e => setColor(e.target.value)} placeholder="Color/Size * (e.g. Black)"
-                className="rounded-lg border border-gray-300 p-2.5 text-sm focus:ring-2 focus:ring-green-500 outline-none" />
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Size</label>
+                <input value={size} onChange={(e) => setSize(e.target.value)} placeholder="e.g. L (optional)"
+                  className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:ring-2 focus:ring-green-500 outline-none" />
+              </div>
             </div>
-            <div className="rounded-lg border border-dashed border-green-200 bg-green-50 p-2.5 text-xs text-green-500 flex items-center">
-              Variant SKU auto-generated: {productName ? `[initials]-NNN-[colour-initials]` : "enter product name first"}
-            </div>
+            <p className="text-xs text-green-600">Product SKU and variant SKU are auto-generated.</p>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Initial Quantity</label>
-              <input type="number" min="1" value={newQty} onChange={e => setNewQty(parseInt(e.target.value) || 1)}
+              <label className="block text-sm font-medium text-gray-700 mb-1">Quantity *</label>
+              <input type="number" min={1} placeholder="Enter quantity" value={newQty} onChange={(e) => setNewQty(e.target.value)}
                 className="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-green-500 outline-none" />
             </div>
             {supplierSection}

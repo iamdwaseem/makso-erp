@@ -10,6 +10,7 @@ import { buildApp, cleanDb, prisma } from "./helpers.js";
 
 const app = buildApp();
 let token = "";
+let warehouseId = "";
 let supplierId = "";
 let customerId = "";
 let productId = "";
@@ -24,6 +25,13 @@ beforeAll(async () => {
   const loginRes = await request(app).post("/api/auth/login")
     .send({ email: "fuzz@wareflow.io", password: "FuzzPass@1" });
   token = loginRes.body.token;
+
+  const whRes = await request(app).post("/api/warehouses").set("Authorization", `Bearer ${token}`)
+    .send({ name: "Fuzz Warehouse", code: `WH-${Date.now()}` });
+  if (whRes.status !== 201) {
+    throw new Error(`Expected warehouse 201, got ${whRes.status}: ${JSON.stringify(whRes.body)}`);
+  }
+  warehouseId = whRes.body.id;
 
   // Minimal data for downstream tests
   const sup = await request(app).post("/api/suppliers").set("Authorization", `Bearer ${token}`)
@@ -44,7 +52,11 @@ beforeAll(async () => {
 
   // Stock it so we can test over-sell
   await request(app).post("/api/purchases").set("Authorization", `Bearer ${token}`)
-    .send({ supplier_id: supplierId, items: [{ variant_id: variantId, quantity: 10 }] });
+    .send({
+      supplier_id: supplierId,
+      warehouse_id: warehouseId,
+      items: [{ variant_id: variantId, quantity: 10 }],
+    });
 });
 
 afterAll(async () => { await cleanDb(); await prisma.$disconnect(); });
@@ -135,7 +147,7 @@ describe("Purchases — dirty quantity", () => {
   it("negative quantity → not 500", async () => {
     const res = await request(app).post("/api/purchases")
       .set("Authorization", `Bearer ${token}`)
-      .send({ supplier_id: supplierId, items: [{ variant_id: variantId, quantity: -50 }] });
+      .send({ supplier_id: supplierId, warehouse_id: warehouseId, items: [{ variant_id: variantId, quantity: -50 }] });
     neverCrash(res.status);
     expect(res.status).toBeGreaterThanOrEqual(400);
   });
@@ -143,28 +155,28 @@ describe("Purchases — dirty quantity", () => {
   it("zero quantity → not 500", async () => {
     const res = await request(app).post("/api/purchases")
       .set("Authorization", `Bearer ${token}`)
-      .send({ supplier_id: supplierId, items: [{ variant_id: variantId, quantity: 0 }] });
+      .send({ supplier_id: supplierId, warehouse_id: warehouseId, items: [{ variant_id: variantId, quantity: 0 }] });
     neverCrash(res.status);
   });
 
   it("float quantity → not 500", async () => {
     const res = await request(app).post("/api/purchases")
       .set("Authorization", `Bearer ${token}`)
-      .send({ supplier_id: supplierId, items: [{ variant_id: variantId, quantity: 1.7 }] });
+      .send({ supplier_id: supplierId, warehouse_id: warehouseId, items: [{ variant_id: variantId, quantity: 1.7 }] });
     neverCrash(res.status);
   });
 
   it("string quantity → not 500", async () => {
     const res = await request(app).post("/api/purchases")
       .set("Authorization", `Bearer ${token}`)
-      .send({ supplier_id: supplierId, items: [{ variant_id: variantId, quantity: "lots" }] });
+      .send({ supplier_id: supplierId, warehouse_id: warehouseId, items: [{ variant_id: variantId, quantity: "lots" }] });
     neverCrash(res.status);
   });
 
   it("missing items array → not 500", async () => {
     const res = await request(app).post("/api/purchases")
       .set("Authorization", `Bearer ${token}`)
-      .send({ supplier_id: supplierId });
+      .send({ supplier_id: supplierId, warehouse_id: warehouseId });
     neverCrash(res.status);
     expect(res.status).toBeGreaterThanOrEqual(400);
   });
@@ -175,7 +187,11 @@ describe("Sales — dirty input", () => {
   it("sell more than in stock → 400 not 500", async () => {
     const res = await request(app).post("/api/sales")
       .set("Authorization", `Bearer ${token}`)
-      .send({ customer_id: customerId, items: [{ variant_id: variantId, quantity: 99999 }] });
+      .send({
+        customer_id: customerId,
+        warehouse_id: warehouseId,
+        items: [{ variant_id: variantId, quantity: 99999 }],
+      });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/insufficient/i);
   });
@@ -183,7 +199,11 @@ describe("Sales — dirty input", () => {
   it("non-existent variant_id → not 500", async () => {
     const res = await request(app).post("/api/sales")
       .set("Authorization", `Bearer ${token}`)
-      .send({ customer_id: customerId, items: [{ variant_id: "00000000-0000-0000-0000-000000000000", quantity: 1 }] });
+      .send({
+        customer_id: customerId,
+        warehouse_id: warehouseId,
+        items: [{ variant_id: "00000000-0000-0000-0000-000000000000", quantity: 1 }],
+      });
     neverCrash(res.status);
     expect(res.status).toBeGreaterThanOrEqual(400);
   });
@@ -191,7 +211,7 @@ describe("Sales — dirty input", () => {
   it("empty items array → not 500", async () => {
     const res = await request(app).post("/api/sales")
       .set("Authorization", `Bearer ${token}`)
-      .send({ customer_id: customerId, items: [] });
+      .send({ customer_id: customerId, warehouse_id: warehouseId, items: [] });
     neverCrash(res.status);
   });
 });
@@ -212,7 +232,8 @@ describe("Soft Delete — audit trail integrity", () => {
 
     const listRes = await request(app).get("/api/products")
       .set("Authorization", `Bearer ${token}`);
-    const found = listRes.body.find((p: any) => p.id === newId);
+    const rows = Array.isArray(listRes.body.data) ? listRes.body.data : [];
+    const found = rows.find((p: { id: string }) => p.id === newId);
     expect(found).toBeUndefined(); // hidden from list
   });
 
@@ -220,7 +241,11 @@ describe("Soft Delete — audit trail integrity", () => {
     // Make a sale
     await request(app).post("/api/sales")
       .set("Authorization", `Bearer ${token}`)
-      .send({ customer_id: customerId, items: [{ variant_id: variantId, quantity: 1 }] });
+      .send({
+        customer_id: customerId,
+        warehouse_id: warehouseId,
+        items: [{ variant_id: variantId, quantity: 1 }],
+      });
 
     // Soft-delete the variant
     await request(app).delete(`/api/variants/${variantId}`)
@@ -230,8 +255,9 @@ describe("Soft Delete — audit trail integrity", () => {
     const histRes = await request(app).get("/api/sales")
       .set("Authorization", `Bearer ${token}`);
     expect(histRes.status).toBe(200);
-    const hasSale = histRes.body.some((s: any) =>
-      s.items?.some((i: any) => i.variant_id === variantId)
+    const salesRows = Array.isArray(histRes.body.data) ? histRes.body.data : [];
+    const hasSale = salesRows.some((s: { items?: { variant_id?: string }[] }) =>
+      s.items?.some((i) => i.variant_id === variantId)
     );
     expect(hasSale).toBe(true); // audit trail intact
   });
@@ -256,7 +282,11 @@ describe("Zero Inventory Guard — cannot delete with live stock", () => {
 
     await request(app).post("/api/purchases")
       .set("Authorization", `Bearer ${token}`)
-      .send({ supplier_id: supplierId, items: [{ variant_id: guardVariantId, quantity: 500 }] });
+      .send({
+        supplier_id: supplierId,
+        warehouse_id: warehouseId,
+        items: [{ variant_id: guardVariantId, quantity: 500 }],
+      });
   });
 
   it("DELETE variant with 500 units in stock → 400 with clear message", async () => {
@@ -279,7 +309,11 @@ describe("Zero Inventory Guard — cannot delete with live stock", () => {
     // Sell all stock
     await request(app).post("/api/sales")
       .set("Authorization", `Bearer ${token}`)
-      .send({ customer_id: customerId, items: [{ variant_id: guardVariantId, quantity: 500 }] });
+      .send({
+        customer_id: customerId,
+        warehouse_id: warehouseId,
+        items: [{ variant_id: guardVariantId, quantity: 500 }],
+      });
 
     const res = await request(app).delete(`/api/variants/${guardVariantId}`)
       .set("Authorization", `Bearer ${token}`);

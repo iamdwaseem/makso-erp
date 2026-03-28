@@ -22,6 +22,8 @@ import authRoutes from "./routes/auth.routes.js";
 import warehouseRoutes from "./routes/warehouse.routes.js";
 import userRoutes from "./routes/user.routes.js";
 import historyRoutes from "./routes/history.routes.js";
+import updateRequestRoutes from "./routes/updateRequest.routes.js";
+import skuHistoryRoutes from "./routes/skuHistory.routes.js";
 import { authenticate } from "./middleware/auth.middleware.js";
 import { resolveTenant } from "./middleware/tenant.middleware.js";
 import { authorizeWarehouseAccess } from "./middleware/warehouseAccess.middleware.js";
@@ -66,6 +68,8 @@ app.use("/api", dashboardRoutes);
 app.use("/api", warehouseRoutes);
 app.use("/api", userRoutes);
 app.use("/api", historyRoutes);
+app.use("/api", updateRequestRoutes);
+app.use("/api", skuHistoryRoutes);
 
 // Health Check — lightweight, no heavy DB queries
 app.get("/health", async (req, res) => {

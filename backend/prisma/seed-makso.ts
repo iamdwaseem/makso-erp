@@ -3,7 +3,11 @@
  * Run from project root: npx tsx backend/prisma/seed-makso.ts
  * Or from backend: npx tsx prisma/seed-makso.ts
  *
- * Creates: org, warehouses, users, categories, products, variants,
+ * IMPORTANT: This script TRUNCATES all application tables first. If your DB “went empty”
+ * after `npx prisma db seed` or `prisma migrate reset`, that is expected — seed replaces data.
+ *
+ * Creates: org, warehouses, users, categories, products, variants (SKUs:
+ * product NAME5-SEQ2, variant NAME5-COLOR3-SIZE3-SEQ2 — same rules as runtime),
  * suppliers, customers, purchases (spread over past months), sales,
  * inventory, inventory_summaries, inventory_ledger. Uses varied dates
  * so dashboard trend and gain/loss graphs have data. Some variants
@@ -22,6 +26,8 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { lettersFromText, encodeSeq2 } from "../src/utils/sku-format.js";
+import { reEnableRlsOnSeedTables, truncateAllApplicationTables } from "./seed-truncate.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const prisma = new PrismaClient();
@@ -51,23 +57,23 @@ function parseCsvLine(line: string): string[] {
   return out;
 }
 
-function slug(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 40) || "item";
+/** Product auto-SKU: NAME5-SEQ2 (aligned with ProductService). */
+function allocProductSku(productName: string, tally: Map<string, number>): string {
+  const name5 = lettersFromText(productName, 5);
+  const idx = tally.get(name5) ?? 0;
+  tally.set(name5, idx + 1);
+  return `${name5}-${encodeSeq2(idx)}`;
 }
 
-function uniqueSku(sku: string, used: Set<string>): string {
-  let s = sku;
-  let n = 0;
-  while (used.has(s)) {
-    n++;
-    s = `${sku}-${n}`;
-  }
-  used.add(s);
-  return s;
+/** Variant auto-SKU: NAME5-COLOR3-SIZE3-SEQ2 (aligned with VariantService). */
+function allocVariantSku(productName: string, color: string, size: string, tally: Map<string, number>): string {
+  const name5 = lettersFromText(productName, 5);
+  const color3 = lettersFromText(color, 3);
+  const size3 = lettersFromText(size.trim().length > 0 ? size.trim() : "NOS", 3);
+  const stem = `${name5}-${color3}-${size3}`;
+  const idx = tally.get(stem) ?? 0;
+  tally.set(stem, idx + 1);
+  return `${stem}-${encodeSeq2(idx)}`;
 }
 
 function chunks<T>(arr: T[], size: number): T[][] {
@@ -112,21 +118,7 @@ async function main() {
   const categories = [...new Set(rows.map((r) => r.category).filter(Boolean))];
   console.log(`Parsed ${rows.length} products, ${categories.length} categories.`);
 
-  const tables = [
-    "dashboard_metrics", "scan_logs", "inventory_ledger", "inventory_summaries",
-    "inventory", "purchase_items", "sale_items", "purchases", "sales",
-    "variants", "products", "customers", "suppliers", "user_warehouses",
-    "warehouses", "users", "categories", "organizations",
-  ];
-  console.log("Resetting database...");
-  for (const table of tables) {
-    try {
-      await prisma.$executeRawUnsafe(`ALTER TABLE "${table}" DISABLE ROW LEVEL SECURITY;`);
-      await prisma.$executeRawUnsafe(`TRUNCATE TABLE "${table}" CASCADE;`);
-    } catch (e: any) {
-      if (!e.message?.includes("does not exist")) console.warn(table, e.message);
-    }
-  }
+  await truncateAllApplicationTables(prisma);
 
   console.log("Creating organization and warehouses...");
   const org = await prisma.organization.create({
@@ -161,19 +153,16 @@ async function main() {
     categoryIds.set(name, c.id);
   }
 
-  const productSkus = new Set<string>();
-  const productsData = rows.map((r) => {
-    const baseSku = slug(r.product_name).replace(/-/g, "").toUpperCase().slice(0, 12) || "PRD";
-    const sku = uniqueSku(baseSku, productSkus);
-    return {
-      id: crypto.randomUUID(),
-      organization_id: org.id,
-      category_id: r.category ? categoryIds.get(r.category) ?? null : null,
-      name: r.product_name,
-      sku,
-      description: r.description || null,
-    };
-  });
+  const productSkuTally = new Map<string, number>();
+  const variantStemTally = new Map<string, number>();
+  const productsData = rows.map((r) => ({
+    id: crypto.randomUUID(),
+    organization_id: org.id,
+    category_id: r.category ? categoryIds.get(r.category) ?? null : null,
+    name: r.product_name,
+    sku: allocProductSku(r.product_name, productSkuTally),
+    description: r.description || null,
+  }));
   for (const batch of chunks(productsData, BATCH)) {
     await prisma.product.createMany({ data: batch });
   }
@@ -186,7 +175,7 @@ async function main() {
     organization_id: org.id,
     product_id: p.id,
     color: "Default",
-    sku: p.sku,
+    sku: allocVariantSku(p.name, "Default", "", variantStemTally),
   }));
   for (const batch of chunks(variantsData, BATCH)) {
     await prisma.variant.createMany({ data: batch });
@@ -295,6 +284,8 @@ async function main() {
     created_by: string;
     payment_type: PaymentType;
     total_amount: number;
+    deleted_at?: Date | null;
+    deleted_by?: string | null;
   }[] = [];
   const saleItemsData: { id: string; organization_id: string; sale_id: string; variant_id: string; quantity: number }[] = [];
   const ledgerOutData: { id: string; organization_id: string; variant_id: string; warehouse_id: string; action: LedgerAction; quantity: number; reference_type: string; reference_id: string; created_at: Date }[] = [];
@@ -340,9 +331,33 @@ async function main() {
       created_at: created,
     });
   }
+
+  // Cancelled delivery notes (soft-deleted sales) + matching stock reversal ledger
+  const ledgerCancelReversalData: (typeof ledgerOutData)[number][] = [];
+  const cancelledSaleIndices = [0, 1, 2];
+  const adminUserId = usersData[0].id;
+  for (const i of cancelledSaleIndices) {
+    if (i >= salesData.length) continue;
+    const out = ledgerOutData[i];
+    if (!out) continue;
+    salesData[i].deleted_at = new Date();
+    salesData[i].deleted_by = adminUserId;
+    ledgerCancelReversalData.push({
+      id: crypto.randomUUID(),
+      organization_id: org.id,
+      variant_id: out.variant_id,
+      warehouse_id: out.warehouse_id,
+      action: "IN",
+      quantity: out.quantity,
+      reference_type: "SALE_CANCEL_REVERSAL",
+      reference_id: salesData[i].id,
+      created_at: new Date(),
+    });
+  }
+
   await prisma.sale.createMany({ data: salesData });
   await prisma.saleItem.createMany({ data: saleItemsData });
-  await prisma.inventoryLedger.createMany({ data: ledgerOutData });
+  await prisma.inventoryLedger.createMany({ data: [...ledgerOutData, ...ledgerCancelReversalData] });
 
   // Aggregate per variant+warehouse for inventory and inventory_summaries
   const variantWhQty = new Map<string, number>();
@@ -353,6 +368,10 @@ async function main() {
   for (const e of ledgerOutData) {
     const key = `${e.variant_id}:${e.warehouse_id}`;
     variantWhQty.set(key, (variantWhQty.get(key) ?? 0) - e.quantity);
+  }
+  for (const e of ledgerCancelReversalData) {
+    const key = `${e.variant_id}:${e.warehouse_id}`;
+    variantWhQty.set(key, (variantWhQty.get(key) ?? 0) + e.quantity);
   }
 
   const inventoryData: { id: string; organization_id: string; variant_id: string; warehouse_id: string; quantity: number }[] = [];
@@ -407,11 +426,100 @@ async function main() {
     }
   }
 
+  // Submitted stock transfers (Dubai → Abu Dhabi): transfers + TRANSFER_OUT/IN ledger, inventory/summaries aligned
+  const wh1 = warehouses[1].id;
+  const transferSeedRows: { id: string; created_at: Date; variant_id: string; quantity: number }[] = [];
+  const transferLedgerRows: (typeof ledgerInData)[number][] = [];
+
+  for (let ti = 0; ti < 18; ti++) {
+    const srcRow = inventoryData.find((x) => x.warehouse_id === wh0 && x.quantity >= 10);
+    if (!srcRow) break;
+    const qty = 5 + (ti % 6);
+    if (srcRow.quantity < qty) continue;
+    const tid = crypto.randomUUID();
+    const created = new Date(now - (ti + 1) * 3 * oneDay);
+    transferSeedRows.push({ id: tid, created_at: created, variant_id: srcRow.variant_id, quantity: qty });
+
+    transferLedgerRows.push({
+      id: crypto.randomUUID(),
+      organization_id: org.id,
+      variant_id: srcRow.variant_id,
+      warehouse_id: wh0,
+      action: "OUT",
+      quantity: qty,
+      reference_type: "TRANSFER_OUT",
+      reference_id: tid,
+      created_at: created,
+    });
+    transferLedgerRows.push({
+      id: crypto.randomUUID(),
+      organization_id: org.id,
+      variant_id: srcRow.variant_id,
+      warehouse_id: wh1,
+      action: "IN",
+      quantity: qty,
+      reference_type: "TRANSFER_IN",
+      reference_id: tid,
+      created_at: created,
+    });
+
+    srcRow.quantity -= qty;
+    const sumSrc = summariesData.find((s) => s.variant_id === srcRow.variant_id && s.warehouse_id === wh0);
+    if (sumSrc) sumSrc.total_quantity -= qty;
+
+    const tgtRow = inventoryData.find((x) => x.variant_id === srcRow.variant_id && x.warehouse_id === wh1);
+    if (tgtRow) {
+      tgtRow.quantity += qty;
+      const sumT = summariesData.find((s) => s.variant_id === srcRow.variant_id && s.warehouse_id === wh1);
+      if (sumT) sumT.total_quantity += qty;
+    } else {
+      inventoryData.push({
+        id: crypto.randomUUID(),
+        organization_id: org.id,
+        variant_id: srcRow.variant_id,
+        warehouse_id: wh1,
+        quantity: qty,
+      });
+      summariesData.push({
+        id: crypto.randomUUID(),
+        organization_id: org.id,
+        variant_id: srcRow.variant_id,
+        warehouse_id: wh1,
+        total_quantity: qty,
+        reserved_quantity: 0,
+      });
+    }
+  }
+
   for (const batch of chunks(inventoryData, BATCH)) {
     await prisma.inventory.createMany({ data: batch });
   }
   for (const batch of chunks(summariesData, BATCH)) {
     await (prisma as any).inventorySummary.createMany({ data: batch });
+  }
+
+  if (transferSeedRows.length > 0) {
+    console.log(`Creating ${transferSeedRows.length} submitted transfers + ledger lines…`);
+    await prisma.transfer.createMany({
+      data: transferSeedRows.map((tr) => ({
+        id: tr.id,
+        organization_id: org.id,
+        source_warehouse_id: wh0,
+        target_warehouse_id: wh1,
+        status: "SUBMITTED",
+        created_at: tr.created_at,
+      })),
+    });
+    await prisma.transferItem.createMany({
+      data: transferSeedRows.map((tr) => ({
+        transfer_id: tr.id,
+        variant_id: tr.variant_id,
+        quantity: tr.quantity,
+      })),
+    });
+    for (const batch of chunks(transferLedgerRows, BATCH)) {
+      await prisma.inventoryLedger.createMany({ data: batch });
+    }
   }
 
   console.log("Creating dashboard metrics...");
@@ -433,17 +541,20 @@ async function main() {
   });
 
   console.log("Re-enabling RLS...");
-  for (const table of tables) {
-    try {
-      await prisma.$executeRawUnsafe(`ALTER TABLE "${table}" ENABLE ROW LEVEL SECURITY;`);
-    } catch (_) {}
-  }
+  await reEnableRlsOnSeedTables(prisma);
 
   console.log("Seed completed.");
   console.log("  Org: makso");
   console.log("  Products:", productsData.length, "| Variants:", variantsData.length);
   console.log("  Categories:", categories.length);
-  console.log("  Purchases:", purchasesData.length, "| Sales:", salesData.length);
+  console.log(
+    "  Purchases:",
+    purchasesData.length,
+    "| Sales:",
+    salesData.length,
+    `(${cancelledSaleIndices.filter((i) => i < salesData.length).length} soft-deleted + reversed in ledger)`
+  );
+  console.log("  Transfers (submitted):", transferSeedRows.length);
   console.log("  Low-stock rows (for reorder table):", summariesData.filter((x) => x.total_quantity < 10).length);
   console.log("  Login: admin@makso.com / admin1234");
 }

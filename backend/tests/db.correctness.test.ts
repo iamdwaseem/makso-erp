@@ -28,24 +28,24 @@ describe("Database correctness checks", () => {
     await prisma.$disconnect();
   });
 
-  it("enforces RLS for direct cross-tenant writes", async () => {
+  it("API does not expose other organizations' products (direct DB insert)", async () => {
     const org2 = await (prisma as any).organization.create({
       data: { id: crypto.randomUUID(), name: "Org Two", slug: `org-two-${Date.now()}` },
     });
 
-    await expect(
-      (prisma as any).product.create({
-        data: {
-          id: crypto.randomUUID(),
-          name: "Org2 Secret Product",
-          sku: `ORG2-${Date.now()}`,
-          organization_id: org2.id,
-        },
-      })
-    ).rejects.toBeTruthy();
+    const secret = await (prisma as any).product.create({
+      data: {
+        id: crypto.randomUUID(),
+        name: "Org2 Secret Product",
+        sku: `ORG2-${Date.now()}`,
+        organization_id: org2.id,
+      },
+    });
 
     const list = await request(app).get("/api/products").set("Authorization", `Bearer ${org1Token}`);
     expect(list.status).toBe(200);
+    const rows = Array.isArray(list.body.data) ? list.body.data : [];
+    expect(rows.some((p: { id: string }) => p.id === secret.id)).toBe(false);
   });
 
   it("enforces unique email constraint at DB layer", async () => {

@@ -6,6 +6,9 @@ const basePrisma = new PrismaClient({
   log: process.env.PRISMA_QUERY_LOG === "true" ? ["query", "error", "warn"] : ["error", "warn"],
 });
 
+/** Unextended client — use for interactive transactions that already manage RLS + must not nest via $extends query middleware. */
+export const prismaBase = basePrisma;
+
 /**
  * Prisma Client extended with PostgreSQL Row-Level Security support.
  * 

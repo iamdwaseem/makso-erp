@@ -57,6 +57,7 @@ export class VariantRepository extends BaseRepository {
       data: this.tenantData({
         product_id: data.product_id,
         color: data.color,
+        size: data.size ?? "",
         sku: data.sku,
       }),
     });
@@ -67,8 +68,16 @@ export class VariantRepository extends BaseRepository {
       where: this.tenantWhere({ id }),
       data: {
         color: data.color || undefined,
+        size: data.size !== undefined ? data.size : undefined,
         sku: data.sku || undefined,
       },
+    });
+  }
+
+  async updateSku(id: string, sku: string): Promise<Variant> {
+    return (this.prisma as any).variant.update({
+      where: this.tenantWhere({ id }),
+      data: { sku },
     });
   }
 

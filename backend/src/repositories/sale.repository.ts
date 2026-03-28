@@ -24,15 +24,28 @@ export class SaleRepository extends BaseRepository {
     this.inventoryRepo = new InventoryRepository(this.prisma, organizationId, userId, userRole, allowedWarehouseIds);
   }
 
-  async findAll({ page = 1, limit = 50 }: { page?: number; limit?: number } = {}) {
+  private saleVisibilityWhere(includeDeleted: boolean, deletedOnly: boolean): Record<string, unknown> {
+    if (deletedOnly) return { deleted_at: { not: null } };
+    if (includeDeleted) return {};
+    return { deleted_at: null };
+  }
+
+  async findAll({
+    page = 1,
+    limit = 50,
+    includeDeleted = false,
+    deletedOnly = false,
+  }: { page?: number; limit?: number; includeDeleted?: boolean; deletedOnly?: boolean } = {}) {
+    const vis = this.saleVisibilityWhere(includeDeleted, deletedOnly);
     const paginated = await this.paginate<any>(
       (this.prisma as any).sale,
-      this.tenantWhere({}),
+      this.tenantWhere(vis),
       page,
       limit,
       {
         customer: true,
         items: { include: { variant: { include: { product: true } } } },
+        deletedBy: { select: { id: true, name: true, email: true } },
       },
       { created_at: "desc" }
     );
@@ -65,18 +78,22 @@ export class SaleRepository extends BaseRepository {
     };
   }
 
-  async count(): Promise<number> {
+  async count(opts?: { includeDeleted?: boolean; deletedOnly?: boolean }): Promise<number> {
+    const vis = this.saleVisibilityWhere(!!opts?.includeDeleted, !!opts?.deletedOnly);
     return (this.prisma as any).sale.count({
-      where: this.tenantWhere({}),
+      where: this.tenantWhere(vis),
     });
   }
 
-  async findById(id: string): Promise<any | null> {
+  async findById(id: string, opts?: { includeDeleted?: boolean }): Promise<any | null> {
+    const base: Record<string, unknown> = { id };
+    if (!opts?.includeDeleted) base.deleted_at = null;
     const sale = await (this.prisma as any).sale.findFirst({
-      where: this.tenantWhere({ id }),
+      where: this.tenantWhere(base),
       include: {
         customer: true,
         items: { include: { variant: { include: { product: true } } } },
+        deletedBy: { select: { id: true, name: true, email: true } },
       },
     });
     if (!sale) return null;
@@ -147,6 +164,60 @@ export class SaleRepository extends BaseRepository {
       return (this.prisma as PrismaClient).$transaction(txFunc);
     } else {
       return txFunc(this.prisma as Prisma.TransactionClient);
+    }
+  }
+
+  /**
+   * Soft-delete sale (cancel delivery note): restore stock with IN + SALE_CANCEL_REVERSAL ledger rows.
+   */
+  async softDeleteSale(id: string, deletedByUserId: string | null): Promise<void> {
+    const row = await (this.prisma as any).sale.findFirst({
+      where: this.tenantWhere({ id }),
+      include: { items: true },
+    });
+    if (!row) throw new Error("Sale not found");
+    if (row.deleted_at) throw new Error("Sale already deleted");
+
+    const warehouseId = row.warehouse_id as string;
+
+    const txFunc = async (tx: Prisma.TransactionClient) => {
+      const txInventoryRepo = new InventoryRepository(
+        tx,
+        this.organizationId,
+        this.userId,
+        this.userRole,
+        this.allowedWarehouseIds
+      );
+
+      for (const item of row.items as any[]) {
+        if (Number(item.quantity) > 0) {
+          await txInventoryRepo.adjustInventory(
+            {
+              variant_id: item.variant_id,
+              warehouse_id: warehouseId,
+              action: "IN",
+              quantity: item.quantity,
+              reference_type: "SALE_CANCEL_REVERSAL",
+              reference_id: id,
+            },
+            tx
+          );
+        }
+      }
+
+      await (tx as any).sale.update({
+        where: { id },
+        data: {
+          deleted_at: new Date(),
+          deleted_by: deletedByUserId,
+        },
+      });
+    };
+
+    if ((this.prisma as any).$transaction) {
+      await (this.prisma as PrismaClient).$transaction(txFunc);
+    } else {
+      await txFunc(this.prisma as Prisma.TransactionClient);
     }
   }
 }

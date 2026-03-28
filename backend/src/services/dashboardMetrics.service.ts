@@ -33,15 +33,17 @@ export class DashboardMetricsService {
             where: filter, 
             _sum: { total_quantity: true } 
         }),
-        tx.sale.count({ 
-            where: { 
-                ...orgWhere, 
-                sale_date: { gte: startOfToday } 
-            } 
+        tx.sale.count({
+            where: {
+                ...orgWhere,
+                deleted_at: null,
+                sale_date: { gte: startOfToday },
+            },
         }),
         tx.purchase.count({ 
             where: { 
                 ...orgWhere, 
+                deleted_at: null,
                 purchase_date: { gte: startOfToday } 
             } 
         }),

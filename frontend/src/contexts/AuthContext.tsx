@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { useWarehouseStore } from "../store/warehouseStore";
+import api from "../api";
 
 
 interface User {
@@ -8,6 +9,7 @@ interface User {
   email: string;
   role: "ADMIN" | "MANAGER" | "STAFF";
   organization_id?: string | null;
+  organizationId?: string | null;
 }
 
 interface AuthContextType {
@@ -20,8 +22,6 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
-
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -40,14 +40,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const validateSession = async () => {
       try {
         const parsedUser = JSON.parse(storedUser);
-        const res = await fetch(`${API_BASE}/auth/me`, {
+        const res = await api.get("/auth/me", {
           headers: { Authorization: `Bearer ${storedToken}` },
         });
-        if (!res.ok) {
-          throw new Error("Session validation failed");
-        }
         setToken(storedToken);
-        setUser(parsedUser);
+        setUser(res.data?.id ? res.data : parsedUser);
       } catch {
         localStorage.removeItem("wareflow_token");
         localStorage.removeItem("wareflow_user");
@@ -63,31 +60,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = async (email: string, password: string) => {
-    const res = await fetch(`${API_BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Login failed");
-    localStorage.setItem("wareflow_token", data.token);
-    localStorage.setItem("wareflow_user", JSON.stringify(data.user));
-    setToken(data.token);
-    setUser(data.user);
+    try {
+      const { data } = await api.post<{ token: string; user: User }>("/auth/login", { email, password });
+      localStorage.setItem("wareflow_token", data.token);
+      localStorage.setItem("wareflow_user", JSON.stringify(data.user));
+      setToken(data.token);
+      setUser(data.user);
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } }; message?: string };
+      throw new Error(err.response?.data?.error || err.message || "Login failed");
+    }
   };
 
   const register = async (name: string, email: string, password: string) => {
-    const res = await fetch(`${API_BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, email, password }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Registration failed");
-    localStorage.setItem("wareflow_token", data.token);
-    localStorage.setItem("wareflow_user", JSON.stringify(data.user));
-    setToken(data.token);
-    setUser(data.user);
+    try {
+      const { data } = await api.post<{ token: string; user: User }>("/auth/register", { name, email, password });
+      localStorage.setItem("wareflow_token", data.token);
+      localStorage.setItem("wareflow_user", JSON.stringify(data.user));
+      setToken(data.token);
+      setUser(data.user);
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } }; message?: string };
+      throw new Error(err.response?.data?.error || err.message || "Registration failed");
+    }
   };
 
   const logout = () => {

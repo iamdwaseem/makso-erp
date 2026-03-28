@@ -1,6 +1,5 @@
 import { Request, Response } from "express";
 import { InventoryService } from "../services/inventory.service.js";
-import { adjustInventorySchema } from "../validators/inventory.validator.js";
 import { BaseController } from "./BaseController.js";
 
 export class InventoryController extends BaseController {
@@ -36,17 +35,6 @@ export class InventoryController extends BaseController {
       const service = this.getService(req);
       const inventory = await service.getInventoryByVariantId(variantId, warehouseId);
       return this.success(res, inventory);
-    } catch (error: any) {
-      return this.handleError(res, error, "Variant not found");
-    }
-  }
-
-  adjustInventory = async (req: Request, res: Response) => {
-    try {
-      const validatedData = adjustInventorySchema.parse(this.getBody(req));
-      const service = this.getService(req);
-      const result = await service.adjustInventory(validatedData);
-      return this.success(res, result);
     } catch (error: any) {
       return this.handleError(res, error, "Variant not found");
     }

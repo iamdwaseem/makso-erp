@@ -20,16 +20,21 @@ export class PurchaseService {
     this.variantRepository = new VariantRepository(prisma as any, organizationId, userId, userRole, allowedWarehouseIds);
   }
 
-  async getAllPurchases(opts?: { page?: number; limit?: number }) {
+  async getAllPurchases(opts?: {
+    page?: number;
+    limit?: number;
+    includeDeleted?: boolean;
+    deletedOnly?: boolean;
+  }) {
     return this.purchaseRepository.findAll(opts);
   }
 
-  async countPurchases() {
-    return this.purchaseRepository.count();
+  async countPurchases(includeDeleted?: boolean, deletedOnly?: boolean) {
+    return this.purchaseRepository.count(includeDeleted, deletedOnly);
   }
 
-  async getPurchaseById(id: string) {
-    const purchase = await this.purchaseRepository.findById(id);
+  async getPurchaseById(id: string, opts?: { includeDeleted?: boolean }) {
+    const purchase = await this.purchaseRepository.findById(id, !!opts?.includeDeleted);
     if (!purchase) {
       throw new Error("Purchase not found");
     }
@@ -56,12 +61,28 @@ export class PurchaseService {
   }
 
   async updatePurchase(id: string, data: PurchaseUpdateInput) {
+    const head = (await this.purchaseRepository.findById(id, true)) as {
+      deleted_at?: Date | null;
+      items?: { id: string }[];
+    } | null;
+    if (!head) {
+      throw new Error("Purchase not found");
+    }
+    if (head.deleted_at) {
+      throw new Error("Cannot update deleted purchase");
+    }
+
     if (data.items !== undefined) {
+      const existingIds = new Set((head.items ?? []).map((i) => i.id));
       for (const item of data.items) {
+        if (item.id && !existingIds.has(item.id)) {
+          throw new Error(`Invalid purchase line id: ${item.id}`);
+        }
         const variant = await this.variantRepository.findById(item.variant_id);
         if (!variant) throw new Error(`Variant not found: ${item.variant_id}`);
       }
     }
+
     const purchase = await this.purchaseRepository.updatePurchase(id, data);
     if (!purchase) {
       throw new Error("Purchase not found");
@@ -69,8 +90,12 @@ export class PurchaseService {
     return purchase;
   }
 
-  async deletePurchase(id: string) {
-    await this.purchaseRepository.deletePurchase(id);
+  async softDeletePurchase(id: string, deletedByUserId: string | null) {
+    await this.purchaseRepository.softDeletePurchase(id, deletedByUserId);
+  }
+
+  async restorePurchase(id: string) {
+    await this.purchaseRepository.restorePurchase(id);
   }
 
   async importFromCsv(data: PurchaseImportInput) {

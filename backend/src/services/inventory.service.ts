@@ -1,6 +1,5 @@
 import { PrismaClient } from "@prisma/client";
 import { InventoryRepository } from "../repositories/inventory.repository.js";
-import { AdjustInventoryInput } from "../validators/inventory.validator.js";
 import { VariantRepository } from "../repositories/variant.repository.js";
 import prisma from "../lib/prisma.js";
 
@@ -37,15 +36,6 @@ export class InventoryService {
        return { variant_id: variantId, warehouse_id: warehouseId, quantity: 0, variant };
     }
     return inventory;
-  }
-
-  async adjustInventory(data: AdjustInventoryInput, txClient?: any) {
-    const variant = await this.variantRepo.findById(data.variant_id);
-    if (!variant) {
-      throw new Error("Variant not found");
-    }
-
-    return this.inventoryRepo.adjustInventory(data, txClient);
   }
 
   async getLedgerByVariantId(variantId: string, warehouseId?: string) {

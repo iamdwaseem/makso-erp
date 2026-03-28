@@ -83,6 +83,8 @@ export function GoodsReceiptNotesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [showDeletedList, setShowDeletedList] = useState(false);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
 
   const [showImportModal, setShowImportModal] = useState(false);
   const [importLines, setImportLines] = useState<ImportLine[]>([]);
@@ -97,7 +99,9 @@ export function GoodsReceiptNotesPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.get("/purchases", { params: { limit: 100 } });
+      const res = await api.get("/purchases", {
+        params: { limit: 100, ...(showDeletedList ? { deletedOnly: true } : {}) },
+      });
       const data = res.data?.data ?? res.data ?? [];
       const list = Array.isArray(data) ? data : [];
       setNotes(list.map(mapPurchaseToRow));
@@ -107,7 +111,7 @@ export function GoodsReceiptNotesPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [showDeletedList]);
 
   useEffect(() => {
     load();
@@ -185,6 +189,20 @@ export function GoodsReceiptNotesPage() {
 
   const filtered = statusFilter === "all" ? notes : notes.filter((n) => n.status === statusFilter);
 
+  const handleRestore = async (purchaseId: string) => {
+    setRestoringId(purchaseId);
+    setError(null);
+    try {
+      await api.post(`/purchases/${purchaseId}/restore`);
+      await load();
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } }; message?: string };
+      setError(err.response?.data?.error || err.message || "Restore failed");
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
   if (viewMode === "form") {
     return (
       <div className="p-6">
@@ -213,31 +231,53 @@ export function GoodsReceiptNotesPage() {
       <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold tracking-tight text-gray-900">Goods Receipt Note</h1>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="rounded border border-gray-200 bg-white px-3 py-1.5 text-sm"
-          >
-            {STATUS_OPTIONS.map((s) => (
-              <option key={s} value={s}>{s === "all" ? "All" : s}</option>
-            ))}
-          </select>
+          <div className="flex rounded-lg border border-gray-200 bg-white p-0.5 text-sm">
+            <button
+              type="button"
+              onClick={() => setShowDeletedList(false)}
+              className={`rounded-md px-3 py-1.5 font-medium ${!showDeletedList ? "bg-slate-800 text-white" : "text-gray-600 hover:bg-gray-50"}`}
+            >
+              Active
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowDeletedList(true)}
+              className={`rounded-md px-3 py-1.5 font-medium ${showDeletedList ? "bg-amber-700 text-white" : "text-gray-600 hover:bg-gray-50"}`}
+            >
+              Deleted
+            </button>
+          </div>
+          {!showDeletedList && (
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="rounded border border-gray-200 bg-white px-3 py-1.5 text-sm"
+            >
+              {STATUS_OPTIONS.map((s) => (
+                <option key={s} value={s}>{s === "all" ? "All" : s}</option>
+              ))}
+            </select>
+          )}
         </div>
         <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => setViewMode("form")}
-            className="rounded bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
-          >
-            NEW
-          </button>
-          <button
-            type="button"
-            onClick={openImportModal}
-            className="rounded border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
-          >
-            IMPORT
-          </button>
+          {!showDeletedList && (
+            <>
+              <button
+                type="button"
+                onClick={() => setViewMode("form")}
+                className="rounded bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
+              >
+                NEW
+              </button>
+              <button
+                type="button"
+                onClick={openImportModal}
+                className="rounded border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+              >
+                IMPORT
+              </button>
+            </>
+          )}
           <button type="button" className="rounded border border-gray-200 bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200">
             EXPORT
           </button>
@@ -288,10 +328,23 @@ export function GoodsReceiptNotesPage() {
                       <Link to={`/inventory/receipt-notes/${row.id}`} className="mr-3 text-blue-600 hover:underline">
                         View
                       </Link>
-                      {(user?.role === "MANAGER" || user?.role === "ADMIN") && (
-                        <Link to={`/inventory/receipt-notes/${row.id}?edit=1`} className="text-blue-600 hover:underline">
-                          Edit
-                        </Link>
+                      {showDeletedList ? (
+                        (user?.role === "MANAGER" || user?.role === "ADMIN") && (
+                          <button
+                            type="button"
+                            onClick={() => handleRestore(row.id)}
+                            disabled={restoringId === row.id}
+                            className="text-green-700 hover:underline disabled:opacity-50"
+                          >
+                            {restoringId === row.id ? "Restoring…" : "Restore"}
+                          </button>
+                        )
+                      ) : (
+                        (user?.role === "MANAGER" || user?.role === "ADMIN") && (
+                          <Link to={`/inventory/receipt-notes/${row.id}?edit=1`} className="text-blue-600 hover:underline">
+                            Edit
+                          </Link>
+                        )
                       )}
                     </td>
                   </tr>

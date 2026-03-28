@@ -62,6 +62,13 @@ export class ProductRepository extends BaseRepository {
     });
   }
 
+  async updateSku(id: string, sku: string): Promise<Product> {
+    return (this.prisma as any).product.update({
+      where: this.tenantWhere({ id }),
+      data: { sku },
+    });
+  }
+
   async delete(id: string): Promise<Product> {
     return (this.prisma as any).product.update({
       where: this.tenantWhere({ id }),

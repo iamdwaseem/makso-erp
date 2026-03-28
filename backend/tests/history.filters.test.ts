@@ -93,24 +93,26 @@ describe("History period and custom date filters", () => {
   });
 
   it("period=custom respects date window", async () => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const fmt = (d: Date) => d.toISOString().slice(0, 10);
-
-    const emptyRange = await request(app)
-      .get("/api/history")
-      .query({ page: 1, limit: 50, period: "custom", startDate: fmt(tomorrow), endDate: fmt(tomorrow) })
-      .set("Authorization", `Bearer ${token}`);
-    expect(emptyRange.status).toBe(200);
-    expect(emptyRange.body.meta.total).toBe(0);
-
+    const fmtLocal = (d: Date) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
     const start = new Date();
     start.setDate(start.getDate() - 7);
     const end = new Date();
 
+    const emptyRange = await request(app)
+      .get("/api/history")
+      .query({ page: 1, limit: 50, period: "custom", startDate: "2099-01-01", endDate: "2099-01-01" })
+      .set("Authorization", `Bearer ${token}`);
+    expect(emptyRange.status).toBe(200);
+    expect(emptyRange.body.meta.total).toBe(0);
+
     const recentOnly = await request(app)
       .get("/api/history")
-      .query({ page: 1, limit: 50, period: "custom", startDate: fmt(start), endDate: fmt(end) })
+      .query({ page: 1, limit: 50, period: "custom", startDate: fmtLocal(start), endDate: fmtLocal(end) })
       .set("Authorization", `Bearer ${token}`);
     expect(recentOnly.status).toBe(200);
     expect(recentOnly.body.meta.total).toBeGreaterThanOrEqual(1);

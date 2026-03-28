@@ -1,6 +1,9 @@
 import { Request, Response } from "express";
 import { ProductService } from "../services/product.service.js";
 import { productSchema } from "../validators/product.validator.js";
+import { productUpdateRequestChangesSchema } from "../validators/updateRequest.validator.js";
+import { UpdateRequestService } from "../services/updateRequest.service.js";
+import { toCamelCase } from "../utils/mapper.js";
 import { BaseController } from "./BaseController.js";
 
 export class ProductController extends BaseController {
@@ -58,7 +61,35 @@ export class ProductController extends BaseController {
   updateProduct = async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
-      const validatedData = productSchema.partial().parse(this.getBody(req));
+      const validatedData = productUpdateRequestChangesSchema.parse(this.getBody(req));
+      const ctx = this.getServiceContext(req);
+
+      if (ctx.userRole === "STAFF") {
+        if (Object.keys(validatedData).length === 0) {
+          return res.status(400).json({ error: "No changes requested" });
+        }
+        if (!ctx.userId) {
+          return res.status(401).json({ error: "Unauthorized" });
+        }
+        const updateRequestService = new UpdateRequestService(
+          ctx.organizationId,
+          ctx.userId,
+          ctx.userRole,
+          ctx.allowedWarehouseIds
+        );
+        const requestRow = await updateRequestService.submitProductUpdateRequest(id, ctx.userId, validatedData);
+        return res.status(202).json(
+          toCamelCase({
+            message: "Update request submitted for approval",
+            data: requestRow,
+          })
+        );
+      }
+
+      if (ctx.userRole !== "ADMIN" && ctx.userRole !== "MANAGER") {
+        return res.status(403).json({ error: "Forbidden: You do not have permission to update products" });
+      }
+
       const service = this.getService(req);
       const product = await service.updateProduct(id, validatedData);
       return this.success(res, product);

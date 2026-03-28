@@ -71,6 +71,15 @@ npm run dev
 ```
 The application will be available at `http://localhost:5173`.
 
+## 🐳 Production (Docker)
+
+Use **Docker Compose** to run PostgreSQL, the API, and an Nginx front (SPA + `/api` proxy). See **[DEPLOY.md](./DEPLOY.md)** for full steps.
+
+```bash
+cp env.deploy.example .env   # then edit secrets
+npm run deploy:up
+```
+
 ## 📜 Available Scripts
 
 ### Backend
@@ -83,6 +92,11 @@ The application will be available at `http://localhost:5173`.
 - `npm run build`: Compiles the project for production
 - `npm run lint`: Runs ESLint for code quality
 - `npm run preview`: Previews the production build locally
+
+### Root (monorepo)
+- `npm run deploy:up`: Build and start the production Docker stack (`docker-compose.prod.yml`, requires `.env`)
+- `npm run deploy:down`: Stop the production stack
+- `npm run deploy:logs`: Follow container logs
 
 ## 🛡 License
 This project is licensed under the ISC License.

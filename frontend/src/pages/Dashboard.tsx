@@ -211,7 +211,7 @@ export function Dashboard() {
         ]
       : [{ month: "—", income: 0, expense: 0 }];
 
-  // KPI cards (resue-style)
+  // KPI cards
   const kpiCards = [
     { value: String(c.totalUnits), label: "TOTAL STOCK (UNITS)", variant: "dark" as const },
     { value: String(c.totalSales), label: "TOTAL SALES", variant: "green" as const },
@@ -244,7 +244,7 @@ export function Dashboard() {
     <div className="p-6">
       {ledgerItem && <LedgerModal item={ledgerItem} onClose={() => setLedgerItem(null)} />}
 
-      {/* Header (resue-style) */}
+      {/* Header */}
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold tracking-tight text-gray-900">DASHBOARD</h1>
         <div className="flex flex-wrap items-center gap-2">

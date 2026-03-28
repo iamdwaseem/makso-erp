@@ -1,9 +1,15 @@
 import axios from 'axios';
 
+function resolveApiBase(): string {
+  const fromEnv = import.meta.env.VITE_API_URL as string | undefined;
+  if (fromEnv && String(fromEnv).trim()) return String(fromEnv).replace(/\/$/, '');
+  // Dev: same-origin /api → Vite proxy to backend (avoids CORS and port mismatch).
+  if (import.meta.env.DEV) return '/api';
+  return '/api';
+}
+
 const api = axios.create({
-  // Use VITE_API_URL if defined (e.g., local dev), otherwise fallback to '/api'
-  // for production where Nginx handles routing /api to the backend.
-  baseURL: import.meta.env.VITE_API_URL || '/api',
+  baseURL: resolveApiBase(),
   headers: {
     'Content-Type': 'application/json',
   },
@@ -11,11 +17,19 @@ const api = axios.create({
 
 import { useWarehouseStore } from './store/warehouseStore';
 
-// Attach the JWT token and current warehouseId to every outgoing request
+function isPublicAuthPath(url: string): boolean {
+  const p = url.replace(/^\//, '').split('?')[0];
+  return p === 'auth/login' || p === 'auth/register';
+}
+
+// Attach JWT for protected calls only (never send stale Bearer on login/register)
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('wareflow_token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+  const rel = config.url || '';
+  if (!isPublicAuthPath(rel)) {
+    const token = localStorage.getItem('wareflow_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
   }
 
   // Inject warehouse scope only for endpoints that are warehouse-aware.
@@ -41,10 +55,12 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// If the server returns 401, clear local session so the user gets redirected
+// On 401/403 from protected APIs, clear session and send user to login (not on failed login/register)
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    const url = String(error.config?.url || "");
+    const isLoginOrRegister = url.includes("auth/login") || url.includes("auth/register");
     const status = error.response?.status;
     const message = String(error.response?.data?.error || "").toLowerCase();
     const isAuthStateError =
@@ -52,10 +68,12 @@ api.interceptors.response.use(
       (status === 403 && message.includes("tenant mismatch")) ||
       (status === 403 && message.includes("organization context mismatch"));
 
-    if (isAuthStateError) {
+    if (isAuthStateError && !isLoginOrRegister) {
       localStorage.removeItem('wareflow_token');
       localStorage.removeItem('wareflow_user');
-      window.location.href = '/login';
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }

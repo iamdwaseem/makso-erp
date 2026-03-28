@@ -3,6 +3,10 @@ WORKDIR /app/frontend
 
 ENV NODE_ENV=production
 
+# Same-origin /api in production (nginx proxies to backend). Override at build time if needed.
+ARG VITE_API_URL=/api
+ENV VITE_API_URL=${VITE_API_URL}
+
 COPY frontend/package*.json ./
 RUN npm ci --include=dev
 

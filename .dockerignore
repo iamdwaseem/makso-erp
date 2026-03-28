@@ -1,0 +1,22 @@
+# Root build context (Dockerfile.backend, Dockerfile.frontend)
+.git
+.github
+**/.git
+**/node_modules
+**/dist
+**/coverage
+**/*.log
+**/.env
+**/.env.*
+!**/.env.example
+**/tsconfig.tsbuildinfo
+**/vite.config.d.ts
+**/vite.config.js
+frontend/dist
+backend/dist
+backend/tests
+frontend/tests
+**/.cursor
+**/agent-transcripts
+*.md
+!README.md
