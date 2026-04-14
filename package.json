@@ -2,6 +2,9 @@
   "name": "side-gig",
   "private": true,
   "scripts": {
+    "deploy:up": "docker compose -f docker-compose.prod.yml --env-file .env up --build -d",
+    "deploy:down": "docker compose -f docker-compose.prod.yml down",
+    "deploy:logs": "docker compose -f docker-compose.prod.yml logs -f",
     "db:up": "docker compose up -d db",
     "db:down": "docker compose down",
     "db:migrate": "npm --prefix backend exec -- npx prisma migrate deploy",

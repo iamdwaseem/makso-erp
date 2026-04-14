@@ -1,6 +1,9 @@
 import { Request, Response } from "express";
 import { VariantService } from "../services/variant.service.js";
 import { variantSchema } from "../validators/variant.validator.js";
+import { variantUpdateRequestChangesSchema } from "../validators/updateRequest.validator.js";
+import { UpdateRequestService } from "../services/updateRequest.service.js";
+import { toCamelCase } from "../utils/mapper.js";
 import { BaseController } from "./BaseController.js";
 
 export class VariantController extends BaseController {
@@ -80,7 +83,35 @@ export class VariantController extends BaseController {
   updateVariant = async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
-      const validatedData = variantSchema.partial().parse(this.getBody(req));
+      const validatedData = variantUpdateRequestChangesSchema.parse(this.getBody(req));
+      const ctx = this.getServiceContext(req);
+
+      if (ctx.userRole === "STAFF") {
+        if (Object.keys(validatedData).length === 0) {
+          return res.status(400).json({ error: "No changes requested" });
+        }
+        if (!ctx.userId) {
+          return res.status(401).json({ error: "Unauthorized" });
+        }
+        const updateRequestService = new UpdateRequestService(
+          ctx.organizationId,
+          ctx.userId,
+          ctx.userRole,
+          ctx.allowedWarehouseIds
+        );
+        const requestRow = await updateRequestService.submitVariantUpdateRequest(id, ctx.userId, validatedData);
+        return res.status(202).json(
+          toCamelCase({
+            message: "Update request submitted for approval",
+            data: requestRow,
+          })
+        );
+      }
+
+      if (ctx.userRole !== "ADMIN" && ctx.userRole !== "MANAGER") {
+        return res.status(403).json({ error: "Forbidden: You do not have permission to update variants" });
+      }
+
       const service = this.getService(req);
       const variant = await service.updateVariant(id, validatedData);
       return this.success(res, variant);

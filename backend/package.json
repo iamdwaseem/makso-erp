@@ -12,7 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:unit": "vitest run tests/sku.test.ts tests/role.middleware.unit.test.ts",
-    "test:integration": "vitest run tests/inventory.test.ts tests/history.filters.test.ts",
+    "test:integration": "vitest run tests/inventory.test.ts tests/history.filters.test.ts tests/transfer.test.ts",
     "test:security": "vitest run tests/auth.test.ts tests/security.authorization.test.ts",
     "test:db": "vitest run tests/db.correctness.test.ts",
     "test:concurrency": "vitest run tests/concurrency.stock.test.ts",
@@ -23,6 +23,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "seed:makso": "tsx prisma/seed-makso.ts",
+    "seed:demo": "tsx prisma/seed.ts",
+    "seed:current": "tsx prisma/seed-current.ts",
     "seed:inventory": "tsx src/seeds/inventory.seed.ts"
   },
   "keywords": [],

@@ -4,6 +4,7 @@ import api from "../../api";
 import { useAuth } from "../../contexts/AuthContext";
 import { useWarehouseStore } from "../../store/warehouseStore";
 import { StockEntry } from "../StockEntry";
+import { FEATURE_FLAGS } from "../../featureFlags";
 
 type ImportLine = { category?: string; productName?: string; sku: string; quantity: number };
 
@@ -59,7 +60,9 @@ type ReceiptNoteRow = {
   status: string;
 };
 
-const STATUS_OPTIONS = ["all", "DRAFT", "SUBMITTED", "CANCELLED"];
+const STATUS_OPTIONS = ["all", "DRAFT", "SUBMITTED", "CANCELLED"] as const;
+const PAGE_SIZE = 20;
+const SEARCH_DEBOUNCE_MS = 350;
 
 function mapPurchaseToRow(p: any): ReceiptNoteRow {
   const items = p.items ?? [];
@@ -75,39 +78,76 @@ function mapPurchaseToRow(p: any): ReceiptNoteRow {
   };
 }
 
+type ListMeta = { total: number; page: number; limit: number; totalPages: number };
+
 export function GoodsReceiptNotesPage() {
   const { user } = useAuth();
   const { currentWarehouseId } = useWarehouseStore();
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [notes, setNotes] = useState<ReceiptNoteRow[]>([]);
+  const [listMeta, setListMeta] = useState<ListMeta | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [searchInput, setSearchInput] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [showDeletedList, setShowDeletedList] = useState(false);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
 
   const [showImportModal, setShowImportModal] = useState(false);
   const [importLines, setImportLines] = useState<ImportLine[]>([]);
   const [importSupplierId, setImportSupplierId] = useState("");
   const [importInvoiceNumber, setImportInvoiceNumber] = useState("");
-  const [suppliers, setSuppliers] = useState<{ id: string; name: string; phone?: string }[]>([]);
+  const [suppliers, setSuppliers] = useState<{ id: string; name: string; code?: string; phone?: string | null }[]>([]);
   const [importSubmitting, setImportSubmitting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(t);
+  }, [searchInput]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, statusFilter, showDeletedList]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.get("/purchases", { params: { limit: 100 } });
+      const params: Record<string, string | number | boolean> = {
+        limit: PAGE_SIZE,
+        page,
+        ...(showDeletedList ? { deletedOnly: true } : {}),
+      };
+      if (debouncedSearch) params.search = debouncedSearch;
+      if (!showDeletedList && statusFilter !== "all") params.status = statusFilter;
+
+      const res = await api.get("/purchases", { params });
       const data = res.data?.data ?? res.data ?? [];
       const list = Array.isArray(data) ? data : [];
       setNotes(list.map(mapPurchaseToRow));
+      const m = res.data?.meta;
+      if (m && typeof m.total === "number") {
+        setListMeta({
+          total: m.total,
+          page: m.page ?? page,
+          limit: m.limit ?? PAGE_SIZE,
+          totalPages: m.totalPages ?? Math.max(1, Math.ceil(m.total / (m.limit || PAGE_SIZE))),
+        });
+      } else {
+        setListMeta(null);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
       setNotes([]);
+      setListMeta(null);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [showDeletedList, page, debouncedSearch, statusFilter]);
 
   useEffect(() => {
     load();
@@ -183,7 +223,19 @@ export function GoodsReceiptNotesPage() {
     }
   };
 
-  const filtered = statusFilter === "all" ? notes : notes.filter((n) => n.status === statusFilter);
+  const handleRestore = async (purchaseId: string) => {
+    setRestoringId(purchaseId);
+    setError(null);
+    try {
+      await api.post(`/purchases/${purchaseId}/restore`);
+      await load();
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } }; message?: string };
+      setError(err.response?.data?.error || err.message || "Restore failed");
+    } finally {
+      setRestoringId(null);
+    }
+  };
 
   if (viewMode === "form") {
     return (
@@ -213,31 +265,61 @@ export function GoodsReceiptNotesPage() {
       <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold tracking-tight text-gray-900">Goods Receipt Note</h1>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="rounded border border-gray-200 bg-white px-3 py-1.5 text-sm"
-          >
-            {STATUS_OPTIONS.map((s) => (
-              <option key={s} value={s}>{s === "all" ? "All" : s}</option>
-            ))}
-          </select>
+          <div className="flex rounded-lg border border-gray-200 bg-white p-0.5 text-sm">
+            <button
+              type="button"
+              onClick={() => setShowDeletedList(false)}
+              className={`rounded-md px-3 py-1.5 font-medium ${!showDeletedList ? "bg-slate-800 text-white" : "text-gray-600 hover:bg-gray-50"}`}
+            >
+              Active
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowDeletedList(true)}
+              className={`rounded-md px-3 py-1.5 font-medium ${showDeletedList ? "bg-amber-700 text-white" : "text-gray-600 hover:bg-gray-50"}`}
+            >
+              Deleted
+            </button>
+          </div>
+          {!showDeletedList && (
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="rounded border border-gray-200 bg-white px-3 py-1.5 text-sm"
+            >
+              {STATUS_OPTIONS.map((s) => (
+                <option key={s} value={s}>{s === "all" ? "All statuses" : s}</option>
+              ))}
+            </select>
+          )}
+          <input
+            type="search"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search receipt no, supplier, ID, status…"
+            className="min-w-[14rem] max-w-md flex-1 rounded border border-gray-200 bg-white px-3 py-1.5 text-sm placeholder:text-gray-400"
+            aria-label="Search goods receipt notes"
+          />
         </div>
         <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => setViewMode("form")}
-            className="rounded bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
-          >
-            NEW
-          </button>
-          <button
-            type="button"
-            onClick={openImportModal}
-            className="rounded border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
-          >
-            IMPORT
-          </button>
+          {!showDeletedList && (
+            <>
+              <button
+                type="button"
+                onClick={() => setViewMode("form")}
+                className="rounded bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
+              >
+                NEW
+              </button>
+              <button
+                type="button"
+                onClick={openImportModal}
+                className="rounded border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+              >
+                IMPORT
+              </button>
+            </>
+          )}
           <button type="button" className="rounded border border-gray-200 bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200">
             EXPORT
           </button>
@@ -265,7 +347,14 @@ export function GoodsReceiptNotesPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((row) => (
+                {!loading && notes.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-10 text-center text-gray-500">
+                      No goods receipt notes match your filters. Try another search or page.
+                    </td>
+                  </tr>
+                )}
+                {notes.map((row) => (
                   <tr key={row.id} className="border-b border-gray-100 hover:bg-gray-50/50">
                     <td className="px-4 py-3 font-mono text-xs">{row.id.slice(0, 8)}…</td>
                     <td className="px-4 py-3 font-medium">{row.receiptNo}</td>
@@ -288,10 +377,31 @@ export function GoodsReceiptNotesPage() {
                       <Link to={`/inventory/receipt-notes/${row.id}`} className="mr-3 text-blue-600 hover:underline">
                         View
                       </Link>
-                      {(user?.role === "MANAGER" || user?.role === "ADMIN") && (
-                        <Link to={`/inventory/receipt-notes/${row.id}?edit=1`} className="text-blue-600 hover:underline">
-                          Edit
+                      {FEATURE_FLAGS.printInvoice && !showDeletedList && (
+                        <Link
+                          to={`/inventory/print-invoice?id=${encodeURIComponent(row.id)}`}
+                          className="mr-3 text-blue-600 hover:underline"
+                        >
+                          Print
                         </Link>
+                      )}
+                      {showDeletedList ? (
+                        (user?.role === "MANAGER" || user?.role === "ADMIN") && (
+                          <button
+                            type="button"
+                            onClick={() => handleRestore(row.id)}
+                            disabled={restoringId === row.id}
+                            className="text-green-700 hover:underline disabled:opacity-50"
+                          >
+                            {restoringId === row.id ? "Restoring…" : "Restore"}
+                          </button>
+                        )
+                      ) : (
+                        (user?.role === "MANAGER" || user?.role === "ADMIN") && (
+                          <Link to={`/inventory/receipt-notes/${row.id}?edit=1`} className="text-blue-600 hover:underline">
+                            Edit
+                          </Link>
+                        )
                       )}
                     </td>
                   </tr>
@@ -299,6 +409,32 @@ export function GoodsReceiptNotesPage() {
               </tbody>
             </table>
           </div>
+          {listMeta && listMeta.totalPages > 0 && (
+            <div className="flex flex-col gap-2 border-t border-gray-200 bg-gray-50/80 px-4 py-3 text-sm text-gray-700 sm:flex-row sm:items-center sm:justify-between">
+              <p className="tabular-nums">
+                Page {listMeta.page} of {listMeta.totalPages}
+                <span className="text-gray-500"> · {listMeta.total} total</span>
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={page <= 1 || loading}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  className="rounded border border-gray-300 bg-white px-3 py-1.5 font-medium hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  disabled={page >= listMeta.totalPages || loading}
+                  onClick={() => setPage((p) => p + 1)}
+                  className="rounded border border-gray-300 bg-white px-3 py-1.5 font-medium hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -384,7 +520,10 @@ export function GoodsReceiptNotesPage() {
                     >
                       <option value="">Select supplier</option>
                       {suppliers.map((s) => (
-                        <option key={s.id} value={s.id}>{s.name}{s.phone ? ` (${s.phone})` : ""}</option>
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                          {s.code ? ` (${s.code})` : ""}
+                        </option>
                       ))}
                     </select>
                   </div>

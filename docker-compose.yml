@@ -1,14 +1,25 @@
+# Local PostgreSQL only — run the API and Vite on the host against localhost:5432.
+# Matches backend/.env: DATABASE_URL=postgresql://erp_user:erp_password@localhost:5432/erp_db
+#
+# First run (or after changing POSTGRES_*): docker compose down -v && docker compose up -d
+# Then: cd backend && npx prisma migrate deploy
+
 services:
   db:
     image: postgres:16-alpine
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: erpdb
-      POSTGRES_USER: erpuser
-      POSTGRES_PASSWORD: strongpassword
+      POSTGRES_DB: erp_db
+      POSTGRES_USER: erp_user
+      POSTGRES_PASSWORD: erp_password
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U erp_user -d erp_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
-  postgres_data:
+  postgres_dev_data:

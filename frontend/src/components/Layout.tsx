@@ -1,10 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { TopNavbar } from "./TopNavbar";
 
 export function Layout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    void import("../pages/Dashboard");
+    void import("../pages/Inventory");
+  }, []);
 
   return (
     <div className="flex min-h-screen">

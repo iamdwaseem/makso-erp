@@ -168,4 +168,109 @@ export class UserService {
       }
     });
   }
+
+  async updateUser(
+    userId: string,
+    data: Partial<{ name: string; email: string; role: "ADMIN" | "MANAGER" | "STAFF" }>,
+    caller: { id?: string; role?: "ADMIN" | "MANAGER" | "STAFF" }
+  ) {
+    const target = await this.prisma.user.findFirst({
+      where: { id: userId, organization_id: this.organizationId },
+      select: { id: true, role: true, email: true },
+    });
+    if (!target) throw new Error("User not found");
+
+    const callerId = caller.id;
+    const callerRole = caller.role;
+
+    const isSelf = !!callerId && callerId === userId;
+    const isAdmin = callerRole === "ADMIN";
+    const isManager = callerRole === "MANAGER";
+
+    if (!isSelf && !isAdmin && !isManager) {
+      throw new Error("Forbidden");
+    }
+
+    if (isManager && target.role !== "STAFF") {
+      throw new Error("Managers can only edit Staff users");
+    }
+
+    const patch: any = {};
+
+    if (data.name !== undefined) {
+      const name = String(data.name).trim();
+      if (!name) throw new Error("Name is required");
+      patch.name = name;
+    }
+
+    if (data.email !== undefined) {
+      const email = String(data.email).trim().toLowerCase();
+      if (!email || !email.includes("@")) throw new Error("Invalid email address");
+
+      const existing = await this.prisma.user.findFirst({
+        where: {
+          organization_id: this.organizationId,
+          email: { equals: email, mode: "insensitive" },
+          id: { not: userId },
+        },
+        select: { id: true },
+      });
+      if (existing) throw new Error("Email already in use");
+
+      // Self can update email; managers/admin can update email too.
+      patch.email = email;
+    }
+
+    if (data.role !== undefined) {
+      if (!isAdmin) throw new Error("Only admins can change roles");
+      patch.role = data.role;
+    }
+
+    if (Object.keys(patch).length === 0) {
+      throw new Error("No changes requested");
+    }
+
+    return (this.prisma as any).user.update({
+      where: { id: userId },
+      data: patch,
+      select: { id: true, name: true, email: true, role: true, created_at: true },
+    });
+  }
+
+  async resetPassword(
+    userId: string,
+    newPassword: string,
+    caller: { id?: string; role?: "ADMIN" | "MANAGER" | "STAFF" }
+  ) {
+    const target = await this.prisma.user.findFirst({
+      where: { id: userId, organization_id: this.organizationId },
+      select: { id: true, role: true },
+    });
+    if (!target) throw new Error("User not found");
+
+    const callerId = caller.id;
+    const callerRole = caller.role;
+    const isSelf = !!callerId && callerId === userId;
+    const isAdmin = callerRole === "ADMIN";
+    const isManager = callerRole === "MANAGER";
+
+    if (!isSelf && !isAdmin && !isManager) {
+      throw new Error("Forbidden");
+    }
+    if (isManager && target.role !== "STAFF") {
+      throw new Error("Managers can only reset passwords for Staff users");
+    }
+
+    const pwd = String(newPassword || "");
+    if (pwd.trim().length < 8) {
+      throw new Error("Password must be at least 8 characters");
+    }
+
+    const hashed = await bcrypt.hash(pwd, 12);
+    await (this.prisma as any).user.update({
+      where: { id: userId },
+      data: { password: hashed },
+    });
+    return { ok: true };
+  }
 }

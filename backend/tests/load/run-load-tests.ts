@@ -3,6 +3,12 @@ import autocannon from "autocannon";
 const BASE_URL = process.env.LOAD_BASE_URL || "http://localhost:4000";
 const API_BASE = `${BASE_URL}/api`;
 const TOKEN = process.env.LOAD_BEARER_TOKEN || "";
+const MAX_CONNECTIONS = Number(process.env.LOAD_MAX_CONNECTIONS || "");
+
+function capConnections(n: number) {
+  if (!Number.isFinite(MAX_CONNECTIONS) || MAX_CONNECTIONS <= 0) return n;
+  return Math.max(1, Math.min(n, MAX_CONNECTIONS));
+}
 
 type Scenario = {
   name: string;
@@ -16,11 +22,12 @@ type Scenario = {
 };
 
 const scenarios: Scenario[] = [
-  { name: "health-check", path: "/health", useApiBase: false, duration: 15, connections: 20, amount: 5000 },
-  { name: "dashboard", path: "/dashboard/stats", duration: 20, connections: 50, amount: 20000 },
-  { name: "history", path: "/history?page=1&limit=50&period=month", duration: 20, connections: 40, amount: 15000 },
-  { name: "inventory", path: "/inventory?page=1", duration: 20, connections: 40, amount: 15000 },
-  { name: "purchases-list", path: "/purchases?limit=50&offset=0", duration: 20, connections: 35, amount: 12000 },
+  { name: "health-check", path: "/health", useApiBase: false, duration: 15, connections: capConnections(20), amount: 5000 },
+  { name: "dashboard", path: "/dashboard/stats", duration: 20, connections: capConnections(50), amount: 20000 },
+  { name: "history", path: "/history?page=1&limit=50&period=month", duration: 20, connections: capConnections(40), amount: 15000 },
+  { name: "inventory", path: "/inventory?page=1", duration: 20, connections: capConnections(40), amount: 15000 },
+  // Purchases list uses page-based pagination (offset is not a supported query param).
+  { name: "purchases-list", path: "/purchases?page=1&limit=50", duration: 20, connections: capConnections(35), amount: 12000 },
 ];
 
 function runScenario(s: Scenario): Promise<void> {

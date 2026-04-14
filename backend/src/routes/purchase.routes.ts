@@ -10,6 +10,11 @@ router.get("/purchases/:id", purchaseController.getPurchaseById);
 router.post("/purchases", purchaseController.createPurchase);
 router.post("/purchases/import-from-csv", purchaseController.importFromCsv);
 router.patch("/purchases/:id", purchaseController.updatePurchase);
+router.post(
+  "/purchases/:id/restore",
+  authorizeRole("MANAGER", "ADMIN"),
+  purchaseController.restorePurchase
+);
 router.delete("/purchases/:id", authorizeRole("MANAGER", "ADMIN"), purchaseController.deletePurchase);
 
 export default router;

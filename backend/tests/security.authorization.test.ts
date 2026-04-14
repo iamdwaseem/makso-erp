@@ -78,8 +78,11 @@ describe("Authorization matrix", () => {
     await prisma.$disconnect();
   });
 
-  it("manager cannot access admin-only user APIs", async () => {
-    const res = await request(app).get("/api/users").set("Authorization", `Bearer ${managerToken}`);
+  it("manager cannot create warehouses (ADMIN only)", async () => {
+    const res = await request(app)
+      .post("/api/warehouses")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ name: "WH-M", code: "WHM", location: "M" });
     expect(res.status).toBe(403);
   });
 

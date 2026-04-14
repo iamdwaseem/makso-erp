@@ -9,6 +9,8 @@ let customerId = "";
 let productId = "";
 let variantId = "";
 let warehouseId = "";
+let purchaseId = "";
+let purchaseItemId = "";
 
 async function getToken() {
   const registerRes = await request(app).post("/api/auth/register").send({ name: "Tester", email: "inv@wareflow.io", password: "TestPass@1" });
@@ -53,7 +55,7 @@ describe("Inventory & Stock Flow", () => {
       .send({ name: "Alpha Bag" });
 
     expect(res.status).toBe(201);
-    expect(res.body.sku).toMatch(/^AB-\d{3}$/);    // e.g. AB-001
+    expect(res.body.sku).toMatch(/^ALPHA-[A-Z]{2}$/); // Alpha Bag → first 5 letters + seq
     productId = res.body.id;
   });
 
@@ -73,7 +75,7 @@ describe("Inventory & Stock Flow", () => {
 
     expect(res.status).toBe(201);
     // Should include color initials
-    expect(res.body.sku).toContain("MB");
+    expect(res.body.sku).toContain("MID"); // Midnight Blue → 3-letter color block
     variantId = res.body.id;
   });
 
@@ -85,12 +87,50 @@ describe("Inventory & Stock Flow", () => {
     expect(res.status).toBe(201);
     expect(res.body.items).toHaveLength(1);
     expect(res.body.items[0].quantity).toBe(50);
+    purchaseId = res.body.id;
+    purchaseItemId = res.body.items[0].id;
 
     // Verify inventory was updated
     const inv = await request(app).get("/api/inventory")
       .set("Authorization", `Bearer ${token}`);
     const found = inv.body.data.find((i: any) => i.variantId === variantId);
     expect(found?.quantity).toBe(50);
+  });
+
+  it("PATCH /api/purchases — GRN catalog labels regenerate product and variant SKUs", async () => {
+    const vBefore = await request(app).get(`/api/variants/${variantId}`).set("Authorization", `Bearer ${token}`);
+    const pBefore = await request(app).get(`/api/products/${productId}`).set("Authorization", `Bearer ${token}`);
+    expect(vBefore.status).toBe(200);
+    expect(pBefore.status).toBe(200);
+
+    const patchRes = await request(app)
+      .patch(`/api/purchases/${purchaseId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        items: [
+          {
+            id: purchaseItemId,
+            variant_id: variantId,
+            quantity: 50,
+            product_name: "Quantum Widget",
+            variant_color: "Coral Red",
+            variant_size: "",
+          },
+        ],
+      });
+
+    expect(patchRes.status).toBe(200);
+
+    const vAfter = await request(app).get(`/api/variants/${variantId}`).set("Authorization", `Bearer ${token}`);
+    const pAfter = await request(app).get(`/api/products/${productId}`).set("Authorization", `Bearer ${token}`);
+    expect(vAfter.body.sku).not.toBe(vBefore.body.sku);
+    expect(pAfter.body.sku).not.toBe(pBefore.body.sku);
+    expect(pAfter.body.sku).toMatch(/^QUANT-[A-Z]{2}$/);
+    expect(vAfter.body.sku).toMatch(/^QUANT-COR-NOS-[A-Z]{2}$/);
+
+    const inv = await request(app).get("/api/inventory").set("Authorization", `Bearer ${token}`);
+    const found = inv.body.data.find((i: any) => i.variantId === variantId);
+    expect(found?.sku ?? found?.variant?.sku).toBe(vAfter.body.sku);
   });
 
   it("POST /api/sales — should stock OUT and reduce inventory", async () => {

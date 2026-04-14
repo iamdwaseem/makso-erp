@@ -101,8 +101,8 @@ export class HistoryService {
     const warehouseId = opts.warehouseId && opts.warehouseId !== "all" ? opts.warehouseId : undefined;
     const { start, end } = this.buildDateRange(opts);
 
-    let purchaseWhere: any = { organization_id: this.organizationId };
-    let saleWhere: any = { organization_id: this.organizationId };
+    let purchaseWhere: any = { organization_id: this.organizationId, deleted_at: null };
+    let saleWhere: any = { organization_id: this.organizationId, deleted_at: null };
     const purchaseDateWhere = this.buildPurchaseDateWhere(start, end);
     const saleDateWhere = this.buildSaleDateWhere(start, end);
     if (purchaseDateWhere) purchaseWhere = { ...purchaseWhere, ...purchaseDateWhere };

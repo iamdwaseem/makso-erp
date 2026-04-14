@@ -1,6 +1,13 @@
+/**
+ * Demo/light seed (~50 rows per entity). Run: npm run seed:demo
+ *
+ * IMPORTANT: TRUNCATES all application tables first — same full wipe as prisma db seed (makso).
+ */
 import { PrismaClient, LedgerAction, UserRole } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
+import { alnumFromText, normalizeSizeToken } from "../src/utils/sku-format.js";
+import { reEnableRlsOnSeedTables, truncateAllApplicationTables } from "./seed-truncate.js";
 
 const prisma = new PrismaClient();
 const BATCH_SIZE = 100;
@@ -17,6 +24,25 @@ function chunks<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
+function cleanProductCode(raw: string): string {
+  return String(raw ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function allocProductCode(i: number): string {
+  return `PRD-${String(i + 1).padStart(6, "0")}`;
+}
+
+function allocVariantSku(productName: string, color: string, productCode: string, size: string): string {
+  const name4 = alnumFromText(productName, 4);
+  const color3 = alnumFromText(color, 3);
+  const code = cleanProductCode(productCode) || "CODE";
+  const sizeTok = normalizeSizeToken(size);
+  return `${name4}-${color3}${code}-${sizeTok}`;
+}
+
 async function createManyInBatches(model: any, data: any[]) {
   for (const batch of chunks(data, BATCH_SIZE)) {
     await model.createMany({ data: batch });
@@ -24,18 +50,7 @@ async function createManyInBatches(model: any, data: any[]) {
 }
 
 async function main() {
-  const tables = [
-    "dashboard_metrics", "scan_logs", "inventory_ledger", "inventory_summaries",
-    "inventory", "purchase_items", "sale_items", "purchases", "sales",
-    "variants", "products", "customers", "suppliers", "user_warehouses",
-    "warehouses", "users", "organizations"
-  ];
-
-  console.log("Resetting database and disabling RLS...");
-  for (const table of tables) {
-    await prisma.$executeRawUnsafe(`ALTER TABLE "${table}" DISABLE ROW LEVEL SECURITY;`);
-    await prisma.$executeRawUnsafe(`TRUNCATE TABLE "${table}" CASCADE;`);
-  }
+  await truncateAllApplicationTables(prisma);
 
   console.log("Creating organization and warehouses...");
   const org = await prisma.organization.create({
@@ -95,6 +110,7 @@ async function main() {
     id: crypto.randomUUID(),
     organization_id: org.id,
     name: `Supplier Logistics ${i + 1}`,
+    code: i % 4 === 0 ? null : `SUP-${String(i + 1).padStart(4, "0")}`,
     email: `contact${i + 1}@supplier.wareflow.com`,
     phone: `+97150${String(1000000 + i).slice(-7)}`,
     address: `Industrial Zone ${i % 25}, UAE`
@@ -119,24 +135,27 @@ async function main() {
   const productsData = Array.from({ length: TARGET_COUNT }).map((_, i) => {
     const type = productTypes[i % productTypes.length];
     const brand = brands[i % brands.length];
-    const sku = `${brand.substring(0, 3).toUpperCase()}-${type.substring(0, 2).toUpperCase()}-${String(i + 1).padStart(5, "0")}`;
+    const name = `${brand} ${type} Series ${i + 1}`;
     return {
       id: crypto.randomUUID(),
       organization_id: org.id,
-      name: `${brand} ${type} Series ${i + 1}`,
-      sku,
+      name,
+      sku: allocProductCode(i),
       description: `Professional ${type} by ${brand}`
     };
   });
   await createManyInBatches(prisma.product, productsData);
 
-  const variantsData = productsData.map((p, i) => ({
-    id: crypto.randomUUID(),
-    organization_id: org.id,
-    product_id: p.id,
-    color: colors[i % colors.length],
-    sku: `${p.sku}-${colors[i % colors.length].substring(0, 2).toUpperCase()}`
-  }));
+  const variantsData = productsData.map((p, i) => {
+    const color = colors[i % colors.length];
+    return {
+      id: crypto.randomUUID(),
+      organization_id: org.id,
+      product_id: p.id,
+      color,
+      sku: allocVariantSku(p.name, color, p.sku, "")
+    };
+  });
   await createManyInBatches(prisma.variant, variantsData);
 
   console.log(`Creating ${TARGET_COUNT} inventory and inventory summaries...`);
@@ -228,6 +247,104 @@ async function main() {
   });
   await createManyInBatches(prisma.inventoryLedger, ledgerData);
 
+  console.log("Creating sample inventory transfer (submitted)…");
+  const anyInv = await prisma.inventory.findFirst({
+    where: { organization_id: org.id, quantity: { gte: 25 } },
+  });
+  const wOther = warehouses.find((w) => w.id !== anyInv?.warehouse_id);
+  if (anyInv && wOther) {
+    const tid = crypto.randomUUID();
+    const moveQty = 20;
+    await prisma.$transaction(async (tx) => {
+      await tx.transfer.create({
+        data: {
+          id: tid,
+          organization_id: org.id,
+          source_warehouse_id: anyInv.warehouse_id,
+          target_warehouse_id: wOther.id,
+          status: "SUBMITTED",
+        },
+      });
+      await tx.transferItem.create({
+        data: { transfer_id: tid, variant_id: anyInv.variant_id, quantity: moveQty },
+      });
+      await tx.inventory.update({
+        where: { id: anyInv.id },
+        data: { quantity: anyInv.quantity - moveQty },
+      });
+      await tx.inventory.upsert({
+        where: {
+          variant_id_warehouse_id: {
+            variant_id: anyInv.variant_id,
+            warehouse_id: wOther.id,
+          },
+        },
+        create: {
+          organization_id: org.id,
+          variant_id: anyInv.variant_id,
+          warehouse_id: wOther.id,
+          quantity: moveQty,
+        },
+        update: { quantity: { increment: moveQty } },
+      });
+      await tx.inventorySummary.updateMany({
+        where: {
+          organization_id: org.id,
+          variant_id: anyInv.variant_id,
+          warehouse_id: anyInv.warehouse_id,
+        },
+        data: { total_quantity: { decrement: moveQty } },
+      });
+      const existingTgtSum = await tx.inventorySummary.findFirst({
+        where: {
+          organization_id: org.id,
+          variant_id: anyInv.variant_id,
+          warehouse_id: wOther.id,
+        },
+      });
+      if (existingTgtSum) {
+        await tx.inventorySummary.update({
+          where: { id: existingTgtSum.id },
+          data: { total_quantity: { increment: moveQty } },
+        });
+      } else {
+        await tx.inventorySummary.create({
+          data: {
+            organization_id: org.id,
+            warehouse_id: wOther.id,
+            variant_id: anyInv.variant_id,
+            total_quantity: moveQty,
+            reserved_quantity: 0,
+          },
+        });
+      }
+      await tx.inventoryLedger.createMany({
+        data: [
+          {
+            id: crypto.randomUUID(),
+            organization_id: org.id,
+            variant_id: anyInv.variant_id,
+            warehouse_id: anyInv.warehouse_id,
+            action: "OUT",
+            quantity: moveQty,
+            reference_type: "TRANSFER_OUT",
+            reference_id: tid,
+          },
+          {
+            id: crypto.randomUUID(),
+            organization_id: org.id,
+            variant_id: anyInv.variant_id,
+            warehouse_id: wOther.id,
+            action: "IN",
+            quantity: moveQty,
+            reference_type: "TRANSFER_IN",
+            reference_id: tid,
+          },
+        ],
+      });
+    });
+  }
+
   const scanLogsData = Array.from({ length: TARGET_COUNT }).map((_, i) => ({
     id: crypto.randomUUID(),
     organization_id: org.id,
@@ -258,9 +375,7 @@ async function main() {
   await createManyInBatches((prisma as any).dashboardMetrics, dashboardMetricsData);
 
   console.log("Re-enabling RLS...");
-  for (const table of tables) {
-    await prisma.$executeRawUnsafe(`ALTER TABLE "${table}" ENABLE ROW LEVEL SECURITY;`);
-  }
+  await reEnableRlsOnSeedTables(prisma);
 
   console.log("Seed completed successfully.");
   console.log(`Organization: ${org.slug}`);

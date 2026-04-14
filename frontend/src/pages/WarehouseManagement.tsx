@@ -7,6 +7,7 @@ interface Warehouse {
   name: string;
   code: string;
   location: string | null;
+  phone?: string | null;
   createdAt: string;
 }
 
@@ -32,6 +33,7 @@ export function WarehouseManagement() {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [location, setLocation] = useState("");
+  const [phone, setPhone] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [deleteCandidate, setDeleteCandidate] = useState<Warehouse | null>(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
@@ -39,6 +41,12 @@ export function WarehouseManagement() {
   const [detailsWarehouse, setDetailsWarehouse] = useState<Warehouse | null>(null);
   const [detailsStats, setDetailsStats] = useState<WarehouseDashboardStats | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
+  const [editWarehouse, setEditWarehouse] = useState<Warehouse | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editCode, setEditCode] = useState("");
+  const [editLocation, setEditLocation] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
 
   useEffect(() => {
     fetchWarehouses();
@@ -59,9 +67,9 @@ export function WarehouseManagement() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await api.post("/warehouses", { name, code, location });
+      await api.post("/warehouses", { name, code, location, phone });
       setShowAddModal(false);
-      setName(""); setCode(""); setLocation("");
+      setName(""); setCode(""); setLocation(""); setPhone("");
       fetchWarehouses();
     } catch (err: any) {
       alert(err.response?.data?.error || "Failed to add warehouse");
@@ -108,6 +116,36 @@ export function WarehouseManagement() {
       setDetailsWarehouse(warehouse);
     } finally {
       setDetailsLoading(false);
+    }
+  };
+
+  const openEditWarehouse = (wh: Warehouse) => {
+    setEditWarehouse(wh);
+    setEditName(wh.name || "");
+    setEditCode((wh.code || "").toUpperCase());
+    setEditLocation(wh.location || "");
+    setEditPhone((wh.phone as any) || "");
+  };
+
+  const handleSaveWarehouse = async () => {
+    if (!editWarehouse) return;
+    setEditBusy(true);
+    try {
+      await api.put(`/warehouses/${editWarehouse.id}`, {
+        name: editName,
+        code: editCode,
+        location: editLocation,
+        phone: editPhone,
+      });
+      setEditWarehouse(null);
+      await fetchWarehouses();
+      if (detailsWarehouse?.id === editWarehouse.id) {
+        await openDetailsModal(editWarehouse);
+      }
+    } catch (err: any) {
+      alert(err.response?.data?.error || "Failed to update warehouse");
+    } finally {
+      setEditBusy(false);
     }
   };
 
@@ -235,6 +273,13 @@ export function WarehouseManagement() {
                   Code: <span className="font-mono">{detailsWarehouse.code}</span>
                 </p>
               </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => openEditWarehouse(detailsWarehouse)}
+                  className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Edit
+                </button>
               <button
                 onClick={() => {
                   setDetailsWarehouse(null);
@@ -244,6 +289,7 @@ export function WarehouseManagement() {
               >
                 &times;
               </button>
+              </div>
             </div>
 
             <div className="p-4 sm:p-6 space-y-5 overflow-y-auto">
@@ -255,6 +301,10 @@ export function WarehouseManagement() {
                     <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
                       <p className="text-gray-500 text-xs uppercase tracking-wider">Location</p>
                       <p className="mt-1 text-gray-800 break-words">{detailsWarehouse.location || "No location specified"}</p>
+                    </div>
+                    <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                      <p className="text-gray-500 text-xs uppercase tracking-wider">Phone</p>
+                      <p className="mt-1 text-gray-800 break-words">{detailsWarehouse.phone || "—"}</p>
                     </div>
                     <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
                       <p className="text-gray-500 text-xs uppercase tracking-wider">Created</p>
@@ -331,6 +381,15 @@ export function WarehouseManagement() {
                   className="w-full border border-gray-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Phone (optional)</label>
+                <input
+                  placeholder="e.g. +97150..."
+                  value={phone}
+                  onChange={e => setPhone(e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
               <button 
                 disabled={submitting} 
                 className="w-full bg-indigo-600 text-white font-bold py-4 rounded-xl hover:bg-indigo-700 transition disabled:opacity-50 mt-4 shadow-lg shadow-indigo-100"
@@ -338,6 +397,68 @@ export function WarehouseManagement() {
                 {submitting ? "Creating..." : "Create Warehouse"}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Warehouse Modal */}
+      {editWarehouse && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-4 sm:p-6 border-b border-gray-100 flex justify-between items-center bg-indigo-600 text-white shrink-0">
+              <h3 className="text-lg font-bold">Edit Warehouse</h3>
+              <button onClick={() => setEditWarehouse(null)} className="text-white/80 hover:text-white text-2xl leading-none">&times;</button>
+            </div>
+            <div className="p-4 sm:p-6 space-y-4 overflow-y-auto">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Warehouse Name</label>
+                <input
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Shortcut Code</label>
+                <input
+                  value={editCode}
+                  onChange={(e) => setEditCode(e.target.value.toUpperCase())}
+                  className="w-full border border-gray-200 rounded-xl p-3 text-sm font-mono outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Location Address</label>
+                <textarea
+                  rows={2}
+                  value={editLocation}
+                  onChange={(e) => setEditLocation(e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                <input
+                  value={editPhone}
+                  onChange={(e) => setEditPhone(e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={() => setEditWarehouse(null)}
+                  className="flex-1 rounded-lg bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveWarehouse}
+                  disabled={editBusy}
+                  className="flex-1 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {editBusy ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

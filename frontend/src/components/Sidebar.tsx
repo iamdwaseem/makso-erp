@@ -12,7 +12,6 @@ import {
   Building2,
   Receipt,
   Truck,
-  Wrench,
   BarChart3,
   Settings,
   RotateCcw,
@@ -27,14 +26,13 @@ const mainNavItems: { href: string; label: string; icon: typeof Home; adminOnly?
   { href: "/warehouses", label: "Warehouses", icon: Building2, adminOnly: true },
 ];
 
-// Inventory nav: Dashboard, Items, GRN, GDN, Transfer, Adjustment, Reports, Settings
+// Inventory nav: Dashboard, Items, GRN, GDN, Transfer, Reports, Settings
 const inventorySections = [
   { label: "Dashboard", href: "/inventory/dashboard", icon: LayoutDashboard, children: null as { href: string; label: string }[] | null },
   { label: "Items", href: "/inventory/items", icon: Package, children: null },
   { label: "Goods Receipt Note", href: "/inventory/receipt-notes", icon: Receipt, children: null },
   { label: "Goods Delivery Note", href: "/inventory/stock-exit", icon: Truck, children: null },
   { label: "Inventory Transfer", href: "/inventory/transfers", icon: RotateCcw, children: null },
-  { label: "Inventory Adjustment", href: "/inventory/adjustment", icon: Wrench, children: null },
   {
     label: "Reports",
     icon: BarChart3,

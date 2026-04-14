@@ -22,10 +22,13 @@ import authRoutes from "./routes/auth.routes.js";
 import warehouseRoutes from "./routes/warehouse.routes.js";
 import userRoutes from "./routes/user.routes.js";
 import historyRoutes from "./routes/history.routes.js";
+import updateRequestRoutes from "./routes/updateRequest.routes.js";
+import skuHistoryRoutes from "./routes/skuHistory.routes.js";
 import { authenticate } from "./middleware/auth.middleware.js";
 import { resolveTenant } from "./middleware/tenant.middleware.js";
 import { authorizeWarehouseAccess } from "./middleware/warehouseAccess.middleware.js";
 import { getEnv } from "./config/env.js";
+import { prismaBase } from "./lib/prisma.js";
 
 const app = express();
 const env = getEnv();
@@ -66,6 +69,8 @@ app.use("/api", dashboardRoutes);
 app.use("/api", warehouseRoutes);
 app.use("/api", userRoutes);
 app.use("/api", historyRoutes);
+app.use("/api", updateRequestRoutes);
+app.use("/api", skuHistoryRoutes);
 
 // Health Check — lightweight, no heavy DB queries
 app.get("/health", async (req, res) => {
@@ -73,11 +78,8 @@ app.get("/health", async (req, res) => {
   let dbStatus = "ok";
   let dbLatencyMs = 0;
   try {
-    const { PrismaClient } = await import("@prisma/client");
-    const p = new PrismaClient();
-    await p.$queryRaw`SELECT 1`;
+    await prismaBase.$queryRaw`SELECT 1`;
     dbLatencyMs = Date.now() - start;
-    await p.$disconnect();
   } catch {
     dbStatus = "error";
   }

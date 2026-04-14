@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Barcode from "react-barcode";
 import api from "../api";
-
-import type { InventoryItem, LedgerEntry, DashboardStats } from "../types";
+import type { InventoryItem, DashboardStats, LedgerEntry } from "../types";
 import { useApi } from "../hooks/useApi";
 import { useWarehouseStore } from "../store/warehouseStore";
+import { useNavigate } from "react-router-dom";
 
 type StatusFilter = "all" | "in_stock" | "low_stock" | "out_of_stock";
 type ViewMode = "grid" | "table";
@@ -37,6 +37,7 @@ function colourDot(colour: string) {
 }
 
 export function Inventory() {
+  const navigate = useNavigate();
   const currentWarehouseId = useWarehouseStore(state => state.currentWarehouseId);
 
   const [page, setPage] = useState(1);
@@ -86,7 +87,7 @@ export function Inventory() {
     return () => clearTimeout(t);
   }, [printSku]);
 
-  // Ledger modal
+  // Ledger modal (restored)
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [ledgerLoading, setLedgerLoading] = useState(false);
@@ -126,8 +127,18 @@ export function Inventory() {
   }, [items]);
 
   const supplierOptions = useMemo(() => {
-    const names = [...new Set(items.map(i => i.supplier?.name).filter(Boolean) as string[])].sort();
-    return names;
+    const labels = [
+      ...new Set(
+        items
+          .map((i) => {
+            const s = i.supplier;
+            if (!s?.name) return null;
+            return s.code ? `${s.name} (${s.code})` : s.name;
+          })
+          .filter(Boolean) as string[]
+      ),
+    ].sort();
+    return labels;
   }, [items]);
 
   const anyFilterActive = search || productFilter !== "all" || supplierFilter !== "all" || statusFilter !== "all";
@@ -147,7 +158,11 @@ export function Inventory() {
         (item.supplier?.name ?? "").toLowerCase().includes(q)
       )) return false;
       if (productFilter !== "all" && item.variant.product.id !== productFilter) return false;
-      if (supplierFilter !== "all" && item.supplier?.name !== supplierFilter) return false;
+      if (supplierFilter !== "all") {
+        const s = item.supplier;
+        const label = s?.name ? (s.code ? `${s.name} (${s.code})` : s.name) : "";
+        if (label !== supplierFilter) return false;
+      }
       if (statusFilter !== "all" && statusOf(item.quantity) !== statusFilter) return false;
       return true;
     });
@@ -168,7 +183,6 @@ export function Inventory() {
     return Array.from(map.values()).sort((a, b) => a.productName.localeCompare(b.productName));
   }, [filtered]);
 
-  // ── Ledger (normalize snake_case from backend) ──────────────────────────────
   const normalizeLedgerEntry = (e: any): LedgerEntry => ({
     id: e.id,
     action: (e.action === "OUT" ? "OUT" : "IN") as "IN" | "OUT",
@@ -177,12 +191,14 @@ export function Inventory() {
     referenceId: e.reference_id ?? e.referenceId ?? "",
     createdAt: e.created_at ?? e.createdAt ?? "",
   });
+
   const openLedger = (item: InventoryItem) => {
     setSelectedItem(item);
     setLedgerLoading(true);
     setLedger([]);
-    api.get(`/inventory/${item.variantId ?? item.variant?.id}/ledger`)
-      .then(res => {
+    api
+      .get(`/inventory/${item.variantId ?? item.variant?.id}/ledger`)
+      .then((res) => {
         const raw = Array.isArray(res.data) ? res.data : [];
         setLedger(raw.map(normalizeLedgerEntry));
       })
@@ -190,16 +206,21 @@ export function Inventory() {
       .finally(() => setLedgerLoading(false));
   };
 
-  // Running balance for ledger display (newest first → reverse to compute balance forward)
   const ledgerWithBalance = useMemo(() => {
     const asc = [...ledger].reverse();
     let bal = 0;
-    const withBal = asc.map(e => {
+    const withBal = asc.map((e) => {
       bal = e.action === "IN" ? bal + e.quantity : bal - e.quantity;
       return { ...e, balance: bal };
     });
     return withBal.reverse();
   }, [ledger]);
+
+  const openItem = (item: InventoryItem) => {
+    const vid = item.variantId ?? item.variant?.id;
+    if (!vid) return;
+    navigate(`/inventory/items/${vid}`);
+  };
 
   return (
     <div className="space-y-5">
@@ -365,12 +386,28 @@ export function Inventory() {
                             <span className="text-xs text-gray-400 font-mono">{item.variant.sku}</span>
                           </div>
                           {item.supplier && (
-                            <p className="text-xs text-gray-400 truncate">{item.supplier.name}</p>
+                            <p className="text-xs text-gray-400 truncate">
+                              {item.supplier.name}
+                              {item.supplier.code ? ` (${item.supplier.code})` : ""}
+                              {item.supplier.phone ? ` · ${item.supplier.phone}` : ""}
+                            </p>
                           )}
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <span className="text-sm font-bold text-gray-900">{item.quantity}</span>
                           <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${cls}`}>{label}</span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openItem(item);
+                            }}
+                            title="Details"
+                            className="p-1.5 rounded-lg text-gray-300 hover:text-violet-600 hover:bg-violet-50 transition-colors"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M12 20a8 8 0 1 1 0-16 8 8 0 0 1 0 16z" />
+                            </svg>
+                          </button>
                           <button
                             onClick={e => { e.stopPropagation(); printBarcodeFromList(item.variant.sku); }}
                             title="Print Barcode"
@@ -431,7 +468,11 @@ export function Inventory() {
                       </div>
                     </td>
                     <td className="py-3 px-4 text-sm text-gray-500 font-mono">{item.variant.sku}</td>
-                    <td className="py-3 px-4 text-sm text-gray-600">{item.supplier?.name ?? "—"}</td>
+                    <td className="py-3 px-4 text-sm text-gray-600">
+                      {item.supplier
+                        ? `${item.supplier.name}${item.supplier.code ? ` (${item.supplier.code})` : ""}${item.supplier.phone ? ` · ${item.supplier.phone}` : ""}`
+                        : "—"}
+                    </td>
                     <td className="py-3 px-4 text-xs text-gray-400">
                       {new Date(item.updatedAt).toLocaleDateString()}
                     </td>
@@ -441,6 +482,18 @@ export function Inventory() {
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-1">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openItem(item);
+                          }}
+                          title="Details"
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition-colors"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M12 20a8 8 0 1 1 0-16 8 8 0 0 1 0 16z" />
+                          </svg>
+                        </button>
                         <button
                           onClick={e => { e.stopPropagation(); printBarcodeFromList(item.variant.sku); }}
                           title="Print Barcode"
@@ -469,11 +522,10 @@ export function Inventory() {
         </div>
       )}
 
-      {/* ── Ledger modal (unchanged behaviour) ───────────────────────────── */}
+      {/* ── Ledger modal (restored) ───────────────────────────────────────── */}
       {selectedItem && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl flex flex-col max-h-[90vh] overflow-hidden">
-            {/* Modal header */}
             <div className="p-6 border-b border-gray-100 flex items-start justify-between bg-gray-50">
               <div>
                 <div className="flex items-center gap-2 mb-1">
@@ -482,24 +534,24 @@ export function Inventory() {
                     {selectedItem.variant.product.name} — {selectedItem.variant.color}
                   </h3>
                 </div>
-                <div className="flex items-center gap-3 text-sm text-gray-500">
+                <div className="flex flex-wrap items-center gap-3 text-sm text-gray-500">
                   <span className="font-mono bg-gray-100 px-2 py-0.5 rounded text-xs">{selectedItem.variant.sku}</span>
                   {selectedItem.supplier && <span>· {selectedItem.supplier.name}</span>}
-                  <span>·</span>
                   <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_LABELS[statusOf(selectedItem.quantity)].cls}`}>
                     {selectedItem.quantity} units · {STATUS_LABELS[statusOf(selectedItem.quantity)].label}
                   </span>
                 </div>
               </div>
-              <button onClick={() => setSelectedItem(null)}
-                className="p-2 hover:bg-gray-200 rounded-full text-gray-400 transition-colors ml-4">
+              <button
+                onClick={() => setSelectedItem(null)}
+                className="p-2 hover:bg-gray-200 rounded-full text-gray-400 transition-colors ml-4"
+              >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
 
-            {/* Ledger body */}
             <div className="flex-1 overflow-y-auto p-6">
               {ledgerLoading ? (
                 <div className="py-16 text-center text-gray-400 text-sm">Fetching history…</div>
@@ -509,23 +561,28 @@ export function Inventory() {
                 <table className="min-w-full">
                   <thead>
                     <tr className="border-b border-gray-100">
-                      {["Date & Time", "Action", "Reference", "Change", "Balance"].map(h => (
-                        <th key={h} className={`pb-3 text-xs font-medium text-gray-500 uppercase tracking-wide ${["Change", "Balance"].includes(h) ? "text-right" : "text-left"}`}>
+                      {["Date & Time", "Action", "Reference", "Change", "Balance"].map((h) => (
+                        <th
+                          key={h}
+                          className={`pb-3 text-xs font-medium text-gray-500 uppercase tracking-wide ${
+                            ["Change", "Balance"].includes(h) ? "text-right" : "text-left"
+                          }`}
+                        >
                           {h}
                         </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {ledgerWithBalance.map(entry => (
+                    {ledgerWithBalance.map((entry) => (
                       <tr key={entry.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="py-3 text-sm text-gray-600 pr-4">
-                          {new Date(entry.createdAt).toLocaleString()}
-                        </td>
+                        <td className="py-3 text-sm text-gray-600 pr-4">{new Date(entry.createdAt).toLocaleString()}</td>
                         <td className="py-3 pr-4">
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wide ${
-                            entry.action === "IN" ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"
-                          }`}>
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wide ${
+                              entry.action === "IN" ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"
+                            }`}
+                          >
                             {entry.action}
                           </span>
                         </td>
@@ -533,12 +590,15 @@ export function Inventory() {
                           <span className="capitalize">{entry.referenceType.toLowerCase()}</span>
                           <span className="ml-1 text-[10px] font-mono text-gray-400">{entry.referenceId.slice(0, 8)}</span>
                         </td>
-                        <td className={`py-3 pr-4 text-sm font-bold text-right ${entry.action === "IN" ? "text-emerald-600" : "text-orange-600"}`}>
-                          {entry.action === "IN" ? "+" : "−"}{entry.quantity}
+                        <td
+                          className={`py-3 pr-4 text-sm font-bold text-right ${
+                            entry.action === "IN" ? "text-emerald-600" : "text-orange-600"
+                          }`}
+                        >
+                          {entry.action === "IN" ? "+" : "−"}
+                          {entry.quantity}
                         </td>
-                        <td className="py-3 text-sm font-semibold text-right text-gray-700">
-                          {entry.balance}
-                        </td>
+                        <td className="py-3 text-sm font-semibold text-right text-gray-700">{entry.balance}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -546,9 +606,17 @@ export function Inventory() {
               )}
             </div>
 
-            <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end">
-              <button onClick={() => setSelectedItem(null)}
-                className="px-5 py-2 bg-white border border-gray-300 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50 transition shadow-sm">
+            <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end gap-2">
+              {/* <button
+                onClick={() => openItem(selectedItem)}
+                className="px-5 py-2 bg-white border border-gray-300 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50 transition shadow-sm"
+              >
+                Details
+              </button> */}
+              <button
+                onClick={() => setSelectedItem(null)}
+                className="px-5 py-2 bg-white border border-gray-300 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50 transition shadow-sm"
+              >
                 Close
               </button>
             </div>

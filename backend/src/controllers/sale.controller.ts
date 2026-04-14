@@ -16,9 +16,17 @@ export class SaleController extends BaseController {
 
   getAllSales = async (req: Request, res: Response) => {
     try {
-      const { page, limit } = this.getPagination(req);
+      const { page, limit, search } = this.getPagination(req);
+      const includeDeleted = String(req.query.includeDeleted ?? "").toLowerCase() === "true";
+      const deletedOnly = String(req.query.deletedOnly ?? "").toLowerCase() === "true";
       const service = this.getService(req);
-      const result = await service.getAllSales({ page, limit });
+      const result = await service.getAllSales({
+        page,
+        limit,
+        includeDeleted,
+        deletedOnly,
+        search: search?.trim() || undefined,
+      });
       return res.status(200).json(result);
     } catch (error: any) {
       return this.handleError(res, error);
@@ -28,8 +36,9 @@ export class SaleController extends BaseController {
   getSaleById = async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
+      const includeDeleted = String(req.query.includeDeleted ?? "").toLowerCase() === "true";
       const service = this.getService(req);
-      const sale = await service.getSaleById(id);
+      const sale = await service.getSaleById(id, { includeDeleted });
       return res.status(200).json(sale);
     } catch (error: any) {
       return this.handleError(res, error, "Sale not found");
@@ -48,5 +57,20 @@ export class SaleController extends BaseController {
       }
       return this.handleError(res, error);
     }
-  }
+  };
+
+  deleteSale = async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id as string;
+      const ctx = this.getServiceContext(req);
+      const service = this.getService(req);
+      await service.softDeleteSale(id, ctx.userId ?? null);
+      return res.status(204).send();
+    } catch (error: any) {
+      if (error.message === "Sale already deleted") {
+        return res.status(409).json({ error: error.message });
+      }
+      return this.handleError(res, error, "Sale not found");
+    }
+  };
 }

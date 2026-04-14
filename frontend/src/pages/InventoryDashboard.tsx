@@ -65,7 +65,6 @@ interface TrendPoint {
 
 export function InventoryDashboard() {
   const { currentWarehouseId } = useWarehouseStore();
-  const [totalValue, setTotalValue] = useState<number | null>(null);
   const [lowStockCount, setLowStockCount] = useState<number | null>(null);
   const [itemGroups, setItemGroups] = useState<ItemGroupPoint[]>([]);
   const [productsToReorder, setProductsToReorder] = useState<LowStockRow[]>([]);
@@ -103,7 +102,6 @@ export function InventoryDashboard() {
         setItemGroups(groups);
         setProductsToReorder(data?.lowStockRows ?? data?.low_stock_rows ?? []);
         setRecentActivity(data?.recentActivity ?? []);
-        setTotalValue(null);
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load");
@@ -162,14 +160,9 @@ export function InventoryDashboard() {
   const totalStockUnits = itemGroups.reduce((sum, g) => sum + (g.value ?? 0), 0);
   const displayUnits = counts?.totalUnits != null ? counts.totalUnits.toLocaleString() : totalStockUnits.toLocaleString();
   const metrics = {
-    totalStockValue: totalValue != null ? totalValue.toLocaleString("en-US", { minimumFractionDigits: 2 }) + " AED" : "—",
     totalInventoryItems: itemGroups.length > 0 ? String(itemGroups.length) : (counts?.totalVariants != null ? String(counts.totalVariants) : "—"),
     lowStockItems: lowStockCount ?? "—",
     totalStockUnits: displayUnits,
-    rawMaterialsValue: "—",
-    sellableGoodsValue: totalValue != null ? totalValue.toLocaleString("en-US", { minimumFractionDigits: 2 }) + " AED" : "—",
-    producibleGoodsValue: "—",
-    packingMaterialsValue: "—",
   };
   // Cap pie segments to avoid overflow: top 8 by value, rest as "Other"
   const MAX_PIE_SEGMENTS = 8;
@@ -205,13 +198,8 @@ export function InventoryDashboard() {
       <section className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[
           { label: "Total Stock (Units)", value: metrics.totalStockUnits },
-          { label: "Total Stock (Value)", value: metrics.totalStockValue },
           { label: "Total Inventory Items", value: metrics.totalInventoryItems },
           { label: "Low Stock Items", value: String(metrics.lowStockItems) },
-          { label: "Raw Materials (Value)", value: metrics.rawMaterialsValue },
-          { label: "Sellable Goods (Value)", value: metrics.sellableGoodsValue },
-          { label: "Producible Goods (Value)", value: metrics.producibleGoodsValue },
-          { label: "Packing Materials (Value)", value: metrics.packingMaterialsValue },
         ].map((card) => (
           <div
             key={card.label}
@@ -298,7 +286,7 @@ export function InventoryDashboard() {
           <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-700">
             Inventory In-Hand
           </h3>
-          <p className="mb-2 text-xs text-gray-500">Stock fluctuations and valuation trends</p>
+          <p className="mb-2 text-xs text-gray-500">Stock fluctuations over time</p>
           <div className="h-[280px]">
             {chartsLoading ? (
               <div className="flex h-full items-center justify-center">

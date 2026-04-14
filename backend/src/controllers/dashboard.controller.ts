@@ -168,8 +168,8 @@ export class DashboardController extends BaseController {
       [totalSuppliers, totalCustomers, totalPurchases, totalSales] = await Promise.all([
         (prisma as any).supplier.count({ where: { organization_id: organizationId } }),
         (prisma as any).customer.count({ where: { organization_id: organizationId } }),
-        (prisma as any).purchase.count({ where: { organization_id: organizationId } }),
-        (prisma as any).sale.count({ where: { organization_id: organizationId } }),
+        (prisma as any).purchase.count({ where: { organization_id: organizationId, deleted_at: null } }),
+        (prisma as any).sale.count({ where: { organization_id: organizationId, deleted_at: null } }),
       ]);
 
       if (precomputedWhere.warehouse_id !== undefined) {
@@ -235,7 +235,7 @@ export class DashboardController extends BaseController {
         .filter((g) => g.value > 0)
         .sort((a, b) => b.value - a.value);
 
-      // Low stock in resue shape: variantId, product, variant, sku, quantity, reorderLevel
+      // Low stock rows: variantId, product, variant, sku, quantity, reorderLevel
       const defaultReorderLevel = 10;
       const lowStockRows = (lowStock || []).map((i: any) => ({
         variantId: i.variant_id,

@@ -20,20 +20,30 @@ export class SaleService {
     this.variantRepository = new VariantRepository(prisma as any, organizationId, userId, userRole, allowedWarehouseIds);
   }
 
-  async getAllSales(opts?: { page?: number; limit?: number }) {
+  async getAllSales(opts?: {
+    page?: number;
+    limit?: number;
+    includeDeleted?: boolean;
+    deletedOnly?: boolean;
+    search?: string;
+  }) {
     return this.saleRepository.findAll(opts);
   }
 
-  async countSales() {
-    return this.saleRepository.count();
+  async countSales(opts?: { includeDeleted?: boolean; deletedOnly?: boolean }) {
+    return this.saleRepository.count(opts);
   }
 
-  async getSaleById(id: string) {
-    const sale = await this.saleRepository.findById(id);
+  async getSaleById(id: string, opts?: { includeDeleted?: boolean }) {
+    const sale = await this.saleRepository.findById(id, opts);
     if (!sale) {
       throw new Error("Sale not found");
     }
     return sale;
+  }
+
+  async softDeleteSale(id: string, deletedByUserId: string | null) {
+    return this.saleRepository.softDeleteSale(id, deletedByUserId);
   }
 
   async createSale(data: SaleInput) {

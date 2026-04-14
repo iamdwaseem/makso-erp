@@ -3,6 +3,7 @@ import { Html5QrcodeScanner } from "html5-qrcode";
 import api from "../api";
 import { useWarehouseStore } from "../store/warehouseStore";
 import { useScanner } from "../hooks/useScanner";
+import { Link } from "react-router-dom";
 
 interface ScanEntry {
   sku: string;
@@ -366,17 +367,12 @@ export function ScanStation() {
             <div className="flex gap-3 p-5 border-t border-gray-100 bg-gray-50 rounded-b-2xl">
               <button onClick={() => setCompletedSale(null)}
                 className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-xl hover:bg-gray-300 text-sm font-medium">Close</button>
-              <button onClick={() => {
-                const el = document.getElementById("scan-invoice-print-area");
-                if (!el) return;
-                const w = window.open("", "_blank");
-                if (!w) return;
-                w.document.write(`<html><head><title>Invoice ${completedSale.invoice_number || "Sale"}</title></head><body>${el.outerHTML}<script>window.print();window.close();</script></body></html>`);
-                w.document.close();
-              }}
-                className="flex-1 bg-orange-600 text-white py-3 rounded-xl hover:bg-orange-700 text-sm font-bold">
-                🖨️ Print Invoice
-              </button>
+              <Link
+                to={`/inventory/print-delivery-note?id=${encodeURIComponent(completedSale.id)}`}
+                className="flex-1 bg-orange-600 text-white py-3 rounded-xl hover:bg-orange-700 text-sm font-bold text-center"
+              >
+                🖨️ Print Delivery Note
+              </Link>
             </div>
           </div>
         </div>

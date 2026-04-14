@@ -1,12 +1,10 @@
 import { Request, Response } from "express";
-import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { toCamelCase } from "../utils/mapper.js";
 import { getEnv } from "../config/env.js";
-
-const prisma = new PrismaClient();
+import prisma from "../lib/prisma.js";
 
 const RegisterSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -40,9 +38,12 @@ export class AuthController {
       return;
     }
 
-    const { name, email, password } = parsed.data;
+    const { name, password } = parsed.data;
+    const email = parsed.data.email.trim().toLowerCase();
 
-    const existing = await prisma.user.findUnique({ where: { email } });
+    const existing = await prisma.user.findFirst({
+      where: { email: { equals: email, mode: "insensitive" } },
+    });
     if (existing) {
       res.status(409).json({ error: "An account with this email already exists" });
       return;
@@ -93,9 +94,12 @@ export class AuthController {
       return;
     }
 
-    const { email, password } = parsed.data;
+    const { password } = parsed.data;
+    const email = parsed.data.email.trim().toLowerCase();
 
-    const user = await (prisma as any).user.findUnique({ where: { email } });
+    const user = await prisma.user.findFirst({
+      where: { email: { equals: email, mode: "insensitive" } },
+    });
     if (!user) {
       res.status(401).json({ error: "Invalid email or password" });
       return;

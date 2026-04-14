@@ -1,12 +1,14 @@
 export interface Product {
   id: string;
   name: string;
+  sku?: string;
 }
 
 export interface Variant {
   id: string;
   sku: string;
   color: string;
+  size?: string | null;
   product: Product;
 }
 
@@ -16,7 +18,10 @@ export interface InventoryItem {
   quantity: number;
   updatedAt: string;
   variant: Variant;
-  supplier: { name: string; phone: string } | null;
+  warehouse?: { id: string; name: string; code?: string | null } | null;
+  supplier: { name: string; code?: string; phone?: string | null } | null;
+  lastPurchase?: { id: string; invoice_number: string; created_at: string } | null;
+  lastSale?: { id: string; invoice_number: string; created_at: string } | null;
 }
 
 export interface LedgerEntry {
