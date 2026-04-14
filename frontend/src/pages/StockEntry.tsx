@@ -3,9 +3,7 @@ import { QRVariantLabel } from "../components/labels/QRVariantLabel";
 import api from "../api";
 import { useWarehouseStore } from "../store/warehouseStore";
 import { useScanner } from "../hooks/useScanner";
-import { SearchCombobox } from "../components/SearchCombobox";
-
-// ──────────────────────────────────────────────────────────────────────────────
+import { SearchCombobox } from "../components/SearchCombobox";// ──────────────────────────────────────────────────────────────────────────────
 // ──────────────────────────────────────────────────────────────────────────────
 
 interface CartItem {
@@ -33,20 +31,26 @@ export function StockEntry() {
   const [supplierMode, setSupplierMode] = useState<"existing" | "new">("existing");
   const [selectedSupplierId, setSelectedSupplierId] = useState("");
   const [newSupplierName, setNewSupplierName] = useState("");
+  const [newSupplierCode, setNewSupplierCode] = useState("");
   const [newSupplierPhone, setNewSupplierPhone] = useState("");
   const [newSupplierAddress, setNewSupplierAddress] = useState("");
 
   // ── New product (single flow) ────────────────────────────────────────────
   const [productName, setProductName] = useState("");
+  const [productCode, setProductCode] = useState("");
   const [color, setColor] = useState("");
   const [size, setSize] = useState("");
   const [newQty, setNewQty] = useState("");
+  const [manualVariantSkuEnabled, setManualVariantSkuEnabled] = useState(false);
+  const [manualVariantSku, setManualVariantSku] = useState("");
 
   // ── Add variant flow ─────────────────────────────────────────────────────
   const [selectedProduct, setSelectedProduct] = useState("");
   const [addVarColor, setAddVarColor] = useState("");
   const [addVarSize, setAddVarSize] = useState("");
   const [addVarQty, setAddVarQty] = useState("");
+  const [manualAddVariantSkuEnabled, setManualAddVariantSkuEnabled] = useState(false);
+  const [manualAddVariantSku, setManualAddVariantSku] = useState("");
 
   const [qrLabel, setQrLabel] = useState<{ variantId: string, sku: string, productName: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -92,16 +96,18 @@ export function StockEntry() {
       if (!selectedSupplierId) { alert("Please select a supplier"); return null; }
       return selectedSupplierId;
     }
-    if (!newSupplierName || !newSupplierPhone) { alert("Supplier name and phone required"); return null; }
+    if (!newSupplierName.trim()) { alert("Supplier name is required"); return null; }
     const res = await api.post("/suppliers", {
-      name: newSupplierName, phone: newSupplierPhone,
+      name: newSupplierName.trim(),
+      ...(newSupplierCode.trim() ? { code: newSupplierCode.trim() } : {}),
+      ...(newSupplierPhone.trim() ? { phone: newSupplierPhone.trim() } : {}),
       ...(newSupplierAddress ? { address: newSupplierAddress } : {}),
     });
     return res.data.id;
   };
 
   const resetSupplier = () => {
-    setSelectedSupplierId(""); setNewSupplierName(""); setNewSupplierPhone(""); setNewSupplierAddress("");
+    setSelectedSupplierId(""); setNewSupplierName(""); setNewSupplierCode(""); setNewSupplierPhone(""); setNewSupplierAddress("");
   };
 
   // ── Submit: existing stock-in (multi-item) ───────────────────────────────
@@ -143,15 +149,18 @@ export function StockEntry() {
     try {
       const supplierId = await getOrCreateSupplier();
       if (!supplierId) { setSubmitting(false); return; }
-      const productRes = await api.post("/products", { name: productName.trim() });
+      if (!productCode.trim()) { alert("Product code is required"); setSubmitting(false); return; }
+      const productRes = await api.post("/products", { name: productName.trim(), sku: productCode.trim() });
       const variantRes = await api.post("/variants", {
         productId: productRes.data.id,
         color: color.trim(),
         ...(size.trim() ? { size: size.trim() } : {}),
+        ...(manualVariantSkuEnabled && manualVariantSku.trim() ? { sku: manualVariantSku.trim() } : {}),
       });
       await api.post("/purchases", { supplierId: supplierId, warehouseId: currentWarehouseId, items: [{ variantId: variantRes.data.id, quantity: q }] });
       setQrLabel({ variantId: variantRes.data.id, sku: variantRes.data.sku, productName: productRes.data.name });
-      setProductName(""); setColor(""); setSize(""); setNewQty("");
+      setProductName(""); setProductCode(""); setColor(""); setSize(""); setNewQty("");
+      setManualVariantSkuEnabled(false); setManualVariantSku("");
       resetSupplier();
     } catch (err: any) { alert(err.response?.data?.error || err.message); }
     setSubmitting(false);
@@ -171,12 +180,14 @@ export function StockEntry() {
         productId: selectedProduct,
         color: addVarColor.trim(),
         ...(addVarSize.trim() ? { size: addVarSize.trim() } : {}),
+        ...(manualAddVariantSkuEnabled && manualAddVariantSku.trim() ? { sku: manualAddVariantSku.trim() } : {}),
       });
       await api.post("/purchases", { supplierId: supplierId, warehouseId: currentWarehouseId, items: [{ variantId: variantRes.data.id, quantity: q }] });
       const productRes = await api.get(`/products/${selectedProduct}`);
       const pName = productRes.data.name || "Product";
       setQrLabel({ variantId: variantRes.data.id, sku: variantRes.data.sku, productName: pName });
       setSelectedProduct(""); setAddVarColor(""); setAddVarSize(""); setAddVarQty("");
+      setManualAddVariantSkuEnabled(false); setManualAddVariantSku("");
       resetSupplier();
     } catch (err: any) { alert(err.response?.data?.error || err.message); }
     setSubmitting(false);
@@ -206,13 +217,17 @@ export function StockEntry() {
         </button>
       </div>
       {supplierMode === "existing" ? (
-        <SearchCombobox endpoint="/suppliers" mapItem={(s: any) => ({ id: s.id, label: `${s.name} (${s.phone})` })} value={selectedSupplierId} onChange={setSelectedSupplierId}
+        <SearchCombobox endpoint="/suppliers" mapItem={(s: any) => ({ id: s.id, label: `${s.name} (${s.code})` })} value={selectedSupplierId} onChange={setSelectedSupplierId}
           placeholder="Search supplier..." accentClass="focus:border-blue-500" />
       ) : (
         <div className="space-y-2">
           <input value={newSupplierName} onChange={e => setNewSupplierName(e.target.value)} placeholder="Supplier Name *"
             className="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:border-blue-500 outline-none" />
-          <input value={newSupplierPhone} onChange={e => setNewSupplierPhone(e.target.value)} placeholder="Phone *"
+          {mode !== "new" && (
+            <input value={newSupplierPhone} onChange={e => setNewSupplierPhone(e.target.value)} placeholder="GSM Number (optional)"
+              className="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:border-blue-500 outline-none" />
+          )}
+          <input value={newSupplierCode} onChange={e => setNewSupplierCode(e.target.value)} placeholder="Supplier Code (optional)"
             className="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:border-blue-500 outline-none" />
           <input value={newSupplierAddress} onChange={e => setNewSupplierAddress(e.target.value)} placeholder="Address (optional)"
             className="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:border-blue-500 outline-none" />
@@ -324,6 +339,7 @@ export function StockEntry() {
           </div>
 
           <div className="border-t border-gray-100 pt-4 space-y-4 max-w-lg">
+            {/* Supplier at the top for this flow */}
             {supplierSection}
             <button onClick={handleExistingStockIn} disabled={submitting || cartCount === 0}
               className="w-full bg-blue-600 text-white py-2.5 rounded-lg hover:bg-blue-700 text-sm font-bold disabled:opacity-50 transition-colors">
@@ -339,6 +355,8 @@ export function StockEntry() {
           <h3 className="text-base font-semibold text-gray-800 mb-1">Add Variant to Existing Product</h3>
           <p className="text-xs text-gray-400 mb-4">Add a new color/size to an existing product, generates QR and stocks in</p>
           <div className="space-y-4 max-w-lg">
+            {/* Supplier at the top for this flow */}
+            {supplierSection}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Product</label>
               <SearchCombobox endpoint="/products" mapItem={(p: any) => ({ id: p.id, label: `${p.name} (${p.sku})` })} value={selectedProduct} onChange={setSelectedProduct}
@@ -357,12 +375,34 @@ export function StockEntry() {
               </div>
             </div>
             <p className="text-xs text-indigo-600">SKU is auto-generated from product, color, and size.</p>
+            <div className="rounded-lg border border-indigo-100 bg-indigo-50/50 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-medium text-indigo-900">SKU entry</div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setManualAddVariantSkuEnabled((v) => !v);
+                    if (manualAddVariantSkuEnabled) setManualAddVariantSku("");
+                  }}
+                  className="text-xs font-semibold text-indigo-700 hover:underline"
+                >
+                  {manualAddVariantSkuEnabled ? "Use auto SKU" : "Enter SKU manually"}
+                </button>
+              </div>
+              {manualAddVariantSkuEnabled && (
+                <input
+                  value={manualAddVariantSku}
+                  onChange={(e) => setManualAddVariantSku(e.target.value)}
+                  placeholder="Manual SKU (A–Z, 0–9, -)"
+                  className="mt-2 w-full rounded-lg border border-indigo-200 bg-white p-2.5 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+              )}
+            </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Quantity *</label>
               <input type="number" min={1} placeholder="Enter quantity" value={addVarQty} onChange={(e) => setAddVarQty(e.target.value)}
                 className="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
             </div>
-            {supplierSection}
             <button onClick={handleAddVariantStockIn} disabled={submitting}
               className="w-full bg-indigo-600 text-white py-2.5 rounded-lg hover:bg-indigo-700 text-sm font-bold disabled:opacity-50">
               {submitting ? "Processing..." : "Add Variant, Generate QR & Stock In"}
@@ -379,6 +419,20 @@ export function StockEntry() {
           <div className="space-y-4 max-w-lg">
             <input value={productName} onChange={e => setProductName(e.target.value)} placeholder="Product Name *"
               className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:ring-2 focus:ring-green-500 outline-none" />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <input
+                value={productCode}
+                onChange={(e) => setProductCode(e.target.value)}
+                placeholder="Product Code *"
+                className="w-full rounded-lg border border-gray-300 p-2.5 text-sm font-mono focus:ring-2 focus:ring-green-500 outline-none"
+              />
+              <input
+                value={newSupplierPhone}
+                onChange={(e) => setNewSupplierPhone(e.target.value)}
+                placeholder="GSM (optional)"
+                className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:ring-2 focus:ring-green-500 outline-none"
+              />
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Color *</label>
@@ -391,7 +445,32 @@ export function StockEntry() {
                   className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:ring-2 focus:ring-green-500 outline-none" />
               </div>
             </div>
-            <p className="text-xs text-green-600">Product SKU and variant SKU are auto-generated.</p>
+            <div className="rounded-lg border border-green-100 bg-green-50/50 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-medium text-green-900">Variant SKU</div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setManualVariantSkuEnabled((v) => !v);
+                    if (manualVariantSkuEnabled) setManualVariantSku("");
+                  }}
+                  className="text-xs font-semibold text-green-700 hover:underline"
+                >
+                  {manualVariantSkuEnabled ? "Use auto SKU" : "Enter SKU manually"}
+                </button>
+              </div>
+              <p className="mt-1 text-xs text-green-700">
+                Auto pattern: <span className="font-mono">NAME4-COL3{productCode || "CODE"}-SIZE</span>
+              </p>
+              {manualVariantSkuEnabled && (
+                <input
+                  value={manualVariantSku}
+                  onChange={(e) => setManualVariantSku(e.target.value)}
+                  placeholder="Manual SKU (A–Z, 0–9, -)"
+                  className="mt-2 w-full rounded-lg border border-green-200 bg-white p-2.5 text-sm font-mono focus:ring-2 focus:ring-green-500 outline-none"
+                />
+              )}
+            </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Quantity *</label>
               <input type="number" min={1} placeholder="Enter quantity" value={newQty} onChange={(e) => setNewQty(e.target.value)}

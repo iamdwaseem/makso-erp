@@ -54,9 +54,6 @@ export function DashboardLineChart({
     <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
       <div className="mb-4 flex items-center justify-between">
         <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-700">{title}</h3>
-        <select className="rounded border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600">
-          <option>Last months</option>
-        </select>
       </div>
       <div className="h-[280px]">
         <ResponsiveContainer width="100%" height="100%">

@@ -25,6 +25,8 @@ export class PurchaseService {
     limit?: number;
     includeDeleted?: boolean;
     deletedOnly?: boolean;
+    search?: string;
+    status?: "DRAFT" | "SUBMITTED" | "CANCELLED";
   }) {
     return this.purchaseRepository.findAll(opts);
   }

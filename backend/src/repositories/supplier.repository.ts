@@ -18,7 +18,8 @@ export class SupplierRepository extends BaseRepository {
     if (search) {
       whereClause.OR = [
         { name: { contains: search, mode: "insensitive" } },
-        { phone: { contains: search, mode: "insensitive" } }
+        { code: { contains: search, mode: "insensitive" } },
+        { phone: { contains: search, mode: "insensitive" } },
       ];
     }
     return this.paginate<Supplier>(
@@ -41,7 +42,8 @@ export class SupplierRepository extends BaseRepository {
     return (this.prisma as any).supplier.create({
       data: this.tenantData({
         name: data.name,
-        phone: data.phone,
+        code: data.code?.trim() ? data.code.trim() : null,
+        phone: data.phone?.trim() ? data.phone.trim() : null,
         email: data.email || null,
         address: data.address || null,
       }),
@@ -53,7 +55,8 @@ export class SupplierRepository extends BaseRepository {
       where: this.tenantWhere({ id }),
       data: {
         name: data.name,
-        phone: data.phone,
+        code: data.code === undefined ? undefined : (data.code?.trim() ? data.code.trim() : null),
+        phone: data.phone === undefined ? undefined : (data.phone?.trim() ? data.phone.trim() : null),
         email: data.email || undefined,
         address: data.address || undefined,
       },

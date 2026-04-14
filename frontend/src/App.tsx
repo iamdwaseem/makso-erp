@@ -5,6 +5,7 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import { RequireRole } from "./components/RequireRole";
 import { Layout } from "./components/Layout";
 import { PageLoader } from "./components/PageLoader";
+import { FEATURE_FLAGS } from "./featureFlags";
 
 const Dashboard = lazy(() => import("./pages/Dashboard").then((m) => ({ default: m.Dashboard })));
 const ScanStation = lazy(() => import("./pages/ScanStation").then((m) => ({ default: m.ScanStation })));
@@ -51,6 +52,15 @@ const ItemTransactionsReportPage = lazy(() =>
 const LowStockReportPage = lazy(() =>
   import("./pages/inventory/reports/LowStockReportPage").then((m) => ({ default: m.LowStockReportPage }))
 );
+const PrintInvoicePage = FEATURE_FLAGS.printInvoice
+  ? lazy(() => import("./pages/inventory/PrintInvoicePage").then((m) => ({ default: m.PrintInvoicePage })))
+  : null;
+const PrintDeliveryNotePage = lazy(() =>
+  import("./pages/inventory/PrintDeliveryNotePage").then((m) => ({ default: m.PrintDeliveryNotePage }))
+);
+const InventoryItemDetailPage = lazy(() =>
+  import("./pages/inventory/InventoryItemDetailPage").then((m) => ({ default: m.InventoryItemDetailPage }))
+);
 const InventoryTransfersPage = lazy(() =>
   import("./pages/inventory/InventoryTransfersPage").then((m) => ({ default: m.InventoryTransfersPage }))
 );
@@ -68,6 +78,7 @@ const WarehouseManagement = lazy(() =>
 );
 const LoginPage = lazy(() => import("./pages/LoginPage").then((m) => ({ default: m.LoginPage })));
 const RegisterPage = lazy(() => import("./pages/RegisterPage").then((m) => ({ default: m.RegisterPage })));
+const AccountSecurity = lazy(() => import("./pages/AccountSecurity").then((m) => ({ default: m.AccountSecurity })));
 
 export default function App() {
   return (
@@ -92,11 +103,16 @@ export default function App() {
               <Route path="inventory" element={<Navigate to="/inventory/dashboard" replace />} />
               <Route path="inventory/dashboard" element={<InventoryDashboard />} />
               <Route path="inventory/items" element={<Inventory />} />
+              <Route path="inventory/items/:variantId" element={<InventoryItemDetailPage />} />
               <Route path="inventory/receipt-notes" element={<GoodsReceiptNotesPage />} />
               <Route path="inventory/receipt-notes/:id" element={<ReceiptNoteDetailPage />} />
               <Route path="inventory/stock-exit" element={<ScanStation />} />
               <Route path="inventory/transfers" element={<InventoryTransfersPage />} />
               <Route path="inventory/transfers/:id" element={<InventoryTransferDetailPage />} />
+              {FEATURE_FLAGS.printInvoice && PrintInvoicePage ? (
+                <Route path="inventory/print-invoice" element={<PrintInvoicePage />} />
+              ) : null}
+              <Route path="inventory/print-delivery-note" element={<PrintDeliveryNotePage />} />
               <Route path="inventory/adjustment" element={<Navigate to="/inventory/items" replace />} />
               <Route path="inventory/reports/stock" element={<StockReportPage />} />
               <Route path="inventory/reports/summary" element={<InventorySummaryReportPage />} />
@@ -142,6 +158,7 @@ export default function App() {
                   </RequireRole>
                 }
               />
+              <Route path="account/security" element={<AccountSecurity />} />
               <Route path="inventory/stock-entry" element={<Navigate to="/inventory/receipt-notes" replace />} />
               <Route path="stock-entry" element={<Navigate to="/inventory/receipt-notes" replace />} />
               <Route path="stock-exit" element={<Navigate to="/inventory/stock-exit" replace />} />

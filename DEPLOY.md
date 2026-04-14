@@ -8,6 +8,15 @@
 
 The SPA is built with `VITE_API_URL=/api` so the browser calls the **same origin**; nginx forwards `/api` to the API container.
 
+### CORS and DigitalOcean (or any public host)
+
+Browsers talk to **`https://your-domain/api/...`** (same host as the SPA). You do **not** need `http://localhost:4000` in the frontend env: that value gets baked into the JS bundle and will **fail** from users’ machines (wrong host + CORS).
+
+- Keep **`VITE_API_URL=/api`** for the Docker/nginx layout.
+- If you ever split the API to another subdomain, set **`VITE_API_URL=https://api.your-domain.com`** and set backend **`CORS_ORIGIN`** to your SPA origin (e.g. `https://your-domain.com`).
+
+The app also **ignores** localhost `VITE_API_URL` in production builds and falls back to `/api`, so a mis-set DO “build environment” is less likely to break deploys.
+
 ## One-time setup
 
 1. Copy the environment template and edit secrets:

@@ -57,6 +57,16 @@ export function TopNavbar({ onMenuClick }: { onMenuClick?: () => void }) {
                 className="w-full px-4 py-2 text-left text-sm text-gray-800 hover:bg-gray-100"
                 onClick={() => {
                   setUserOpen(false);
+                  navigate("/account/security");
+                }}
+              >
+                Reset password
+              </button>
+              <button
+                type="button"
+                className="w-full px-4 py-2 text-left text-sm text-gray-800 hover:bg-gray-100"
+                onClick={() => {
+                  setUserOpen(false);
                   logout();
                   navigate("/login", { replace: true });
                 }}

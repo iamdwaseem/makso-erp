@@ -26,7 +26,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { lettersFromText, encodeSeq2 } from "../src/utils/sku-format.js";
+import { alnumFromText, normalizeSizeToken } from "../src/utils/sku-format.js";
 import { reEnableRlsOnSeedTables, truncateAllApplicationTables } from "./seed-truncate.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -57,23 +57,25 @@ function parseCsvLine(line: string): string[] {
   return out;
 }
 
-/** Product auto-SKU: NAME5-SEQ2 (aligned with ProductService). */
-function allocProductSku(productName: string, tally: Map<string, number>): string {
-  const name5 = lettersFromText(productName, 5);
-  const idx = tally.get(name5) ?? 0;
-  tally.set(name5, idx + 1);
-  return `${name5}-${encodeSeq2(idx)}`;
+function cleanProductCode(raw: string): string {
+  return String(raw ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
 }
 
-/** Variant auto-SKU: NAME5-COLOR3-SIZE3-SEQ2 (aligned with VariantService). */
-function allocVariantSku(productName: string, color: string, size: string, tally: Map<string, number>): string {
-  const name5 = lettersFromText(productName, 5);
-  const color3 = lettersFromText(color, 3);
-  const size3 = lettersFromText(size.trim().length > 0 ? size.trim() : "NOS", 3);
-  const stem = `${name5}-${color3}-${size3}`;
-  const idx = tally.get(stem) ?? 0;
-  tally.set(stem, idx + 1);
-  return `${stem}-${encodeSeq2(idx)}`;
+/** Product code (seed): MK-000001 style (used as Product.sku in app). */
+function allocProductCode(i: number): string {
+  return `MK-${String(i + 1).padStart(6, "0")}`;
+}
+
+/** Variant SKU (aligned with current runtime): NAME4-COL3{CODE}-SIZE */
+function allocVariantSku(productName: string, color: string, productCode: string, size: string): string {
+  const name4 = alnumFromText(productName, 4);
+  const color3 = alnumFromText(color, 3);
+  const code = cleanProductCode(productCode) || "CODE";
+  const sizeTok = normalizeSizeToken(size);
+  return `${name4}-${color3}${code}-${sizeTok}`;
 }
 
 function chunks<T>(arr: T[], size: number): T[][] {
@@ -153,29 +155,24 @@ async function main() {
     categoryIds.set(name, c.id);
   }
 
-  const productSkuTally = new Map<string, number>();
-  const variantStemTally = new Map<string, number>();
-  const productsData = rows.map((r) => ({
+  const productsData = rows.map((r, i) => ({
     id: crypto.randomUUID(),
     organization_id: org.id,
     category_id: r.category ? categoryIds.get(r.category) ?? null : null,
     name: r.product_name,
-    sku: allocProductSku(r.product_name, productSkuTally),
+    sku: allocProductCode(i),
     description: r.description || null,
   }));
   for (const batch of chunks(productsData, BATCH)) {
     await prisma.product.createMany({ data: batch });
   }
 
-  const productBySku = new Map<string, (typeof productsData)[0]>();
-  productsData.forEach((p) => productBySku.set(p.sku, p));
-
   const variantsData = productsData.map((p) => ({
     id: crypto.randomUUID(),
     organization_id: org.id,
     product_id: p.id,
     color: "Default",
-    sku: allocVariantSku(p.name, "Default", "", variantStemTally),
+    sku: allocVariantSku(p.name, "Default", p.sku, ""),
   }));
   for (const batch of chunks(variantsData, BATCH)) {
     await prisma.variant.createMany({ data: batch });
@@ -186,6 +183,7 @@ async function main() {
     id: crypto.randomUUID(),
     organization_id: org.id,
     name: `Supplier ${i + 1}`,
+    code: i % 3 === 0 ? null : `SUP-${String(i + 1).padStart(4, "0")}`,
     phone: `+97150${String(1000000 + i).slice(-7)}`,
     email: `sup${i + 1}@example.com`,
     address: null as string | null,

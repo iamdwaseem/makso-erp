@@ -50,13 +50,47 @@ export class PurchaseRepository extends BaseRepository {
     limit = 50,
     includeDeleted = false,
     deletedOnly = false,
-  }: { page?: number; limit?: number; includeDeleted?: boolean; deletedOnly?: boolean } = {}) {
+    search,
+    status,
+  }: {
+    page?: number;
+    limit?: number;
+    includeDeleted?: boolean;
+    deletedOnly?: boolean;
+    search?: string;
+    status?: "DRAFT" | "SUBMITTED" | "CANCELLED";
+  } = {}) {
     let extra: Record<string, unknown> = {};
     if (deletedOnly) extra = { deleted_at: { not: null } };
     else if (!includeDeleted) extra = { deleted_at: null };
+    if (status) {
+      extra = { ...extra, status };
+    }
+
+    const whereBase = this.tenantWhere(extra);
+    const q = search?.trim().slice(0, 200) ?? "";
+
+    let where: Record<string, unknown> = whereBase;
+    if (q.length > 0) {
+      const or: Record<string, unknown>[] = [
+        { invoice_number: { contains: q, mode: "insensitive" } },
+        { supplier: { name: { contains: q, mode: "insensitive" } } },
+      ];
+      const uuidRe =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (uuidRe.test(q)) {
+        or.push({ id: q });
+      }
+      const st = q.toUpperCase();
+      if (st === "DRAFT" || st === "SUBMITTED" || st === "CANCELLED") {
+        or.push({ status: st });
+      }
+      where = { ...whereBase, OR: or };
+    }
+
     return this.paginate<Purchase>(
       (this.prisma as any).purchase,
-      this.tenantWhere(extra),
+      where,
       page,
       limit,
       {

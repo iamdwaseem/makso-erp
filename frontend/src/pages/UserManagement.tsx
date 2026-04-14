@@ -24,6 +24,15 @@ export function UserManagement() {
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState<User | null>(null);
+  const [editUser, setEditUser] = useState<User | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editRole, setEditRole] = useState<"ADMIN" | "MANAGER" | "STAFF">("STAFF");
+  const [editBusy, setEditBusy] = useState(false);
+  const [resetPwdUser, setResetPwdUser] = useState<User | null>(null);
+  const [resetPwd, setResetPwd] = useState("");
+  const [resetPwdConfirm, setResetPwdConfirm] = useState("");
+  const [resetPwdBusy, setResetPwdBusy] = useState(false);
 
   // Form State
   const [newName, setNewName] = useState("");
@@ -88,6 +97,47 @@ export function UserManagement() {
       alert(err.response?.data?.error || "Failed to add user");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const openEditUserModal = (u: User) => {
+    setEditUser(u);
+    setEditName(u.name);
+    setEditEmail(u.email);
+    setEditRole(u.role);
+  };
+
+  const handleUpdateUser = async () => {
+    if (!editUser) return;
+    setEditBusy(true);
+    try {
+      const payload: any = { name: editName, email: editEmail };
+      if (isAdmin) payload.role = editRole;
+      await api.put(`/users/${editUser.id}`, payload);
+      setEditUser(null);
+      await fetchUsers();
+    } catch (err: any) {
+      alert(err.response?.data?.error || "Failed to update user");
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
+  const handleResetPasswordForUser = async () => {
+    if (!resetPwdUser) return;
+    if (resetPwd.trim().length < 8) return;
+    if (resetPwd !== resetPwdConfirm) return;
+    setResetPwdBusy(true);
+    try {
+      await api.post(`/users/${resetPwdUser.id}/reset-password`, { newPassword: resetPwd });
+      setResetPwdUser(null);
+      setResetPwd("");
+      setResetPwdConfirm("");
+      alert("Password reset successfully.");
+    } catch (err: any) {
+      alert(err.response?.data?.error || "Failed to reset password");
+    } finally {
+      setResetPwdBusy(false);
     }
   };
 
@@ -256,6 +306,22 @@ export function UserManagement() {
               </div>
 
               <div className="p-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-2">
+                <button
+                  onClick={() => openEditUserModal(user)}
+                  className="text-xs text-blue-700 font-semibold hover:bg-blue-50 px-3 py-1.5 rounded-lg"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => {
+                    setResetPwdUser(user);
+                    setResetPwd("");
+                    setResetPwdConfirm("");
+                  }}
+                  className="text-xs text-amber-700 font-semibold hover:bg-amber-50 px-3 py-1.5 rounded-lg"
+                >
+                  Reset Password
+                </button>
                 {(isAdmin || user.role === "STAFF") && (
                   <button
                     disabled={user.id === currentUser?.id}
@@ -268,6 +334,83 @@ export function UserManagement() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Edit User Modal */}
+      {editUser && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-4 sm:p-6 border-b border-gray-100 flex justify-between items-center bg-blue-600 text-white shrink-0">
+              <h3 className="text-lg font-bold">Edit User</h3>
+              <button onClick={() => setEditUser(null)} className="text-white/80 hover:text-white text-2xl leading-none">&times;</button>
+            </div>
+            <div className="p-4 sm:p-6 space-y-4 overflow-y-auto">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <input value={editName} onChange={(e) => setEditName(e.target.value)} className="w-full border border-gray-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                <input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} className="w-full border border-gray-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                <select
+                  value={editRole}
+                  onChange={(e) => setEditRole(e.target.value as any)}
+                  disabled={!isAdmin}
+                  className="w-full border border-gray-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50"
+                >
+                  <option value="STAFF">STAFF</option>
+                  <option value="MANAGER">MANAGER</option>
+                  <option value="ADMIN">ADMIN</option>
+                </select>
+                {!isAdmin && <p className="mt-1 text-xs text-gray-400">Only Admin can change roles.</p>}
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button onClick={() => setEditUser(null)} className="flex-1 rounded-lg bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-200">
+                  Cancel
+                </button>
+                <button onClick={handleUpdateUser} disabled={editBusy} className="flex-1 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+                  {editBusy ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Password Modal */}
+      {resetPwdUser && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-4 sm:p-6 border-b border-gray-100 flex justify-between items-center bg-amber-600 text-white shrink-0">
+              <h3 className="text-lg font-bold">Reset Password</h3>
+              <button onClick={() => setResetPwdUser(null)} className="text-white/80 hover:text-white text-2xl leading-none">&times;</button>
+            </div>
+            <div className="p-4 sm:p-6 space-y-4 overflow-y-auto">
+              <p className="text-sm text-gray-700">
+                Reset password for <b>{resetPwdUser.email}</b>
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">New password</label>
+                <input type="password" value={resetPwd} onChange={(e) => setResetPwd(e.target.value)} className="w-full border border-gray-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-amber-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Confirm password</label>
+                <input type="password" value={resetPwdConfirm} onChange={(e) => setResetPwdConfirm(e.target.value)} className="w-full border border-gray-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-amber-500" />
+              </div>
+              <button
+                onClick={handleResetPasswordForUser}
+                disabled={resetPwdBusy || resetPwd.trim().length < 8 || resetPwd !== resetPwdConfirm}
+                className="w-full rounded-xl bg-amber-600 px-4 py-3 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+              >
+                {resetPwdBusy ? "Saving…" : "Reset password"}
+              </button>
+              <p className="text-xs text-gray-400">Min 8 characters.</p>
+            </div>
+          </div>
         </div>
       )}
 

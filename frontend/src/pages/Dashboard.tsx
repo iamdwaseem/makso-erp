@@ -6,8 +6,30 @@ import { FinanceCard } from "../components/dashboard/FinanceCard";
 import { DashboardLineChart } from "../components/dashboard/DashboardLineChart";
 import { DashboardBarChart } from "../components/dashboard/DashboardBarChart";
 import { DashboardPieChart } from "../components/dashboard/DashboardPieChart";
-import { CashBankTable } from "../components/dashboard/CashBankTable";
 import { useApi } from "../hooks/useApi";
+
+type DashboardPeriod =
+  | "last_7_days"
+  | "last_30_days"
+  | "this_week"
+  | "last_week"
+  | "this_month"
+  | "last_month"
+  | "this_year"
+  | "last_year"
+  | "custom";
+
+const PERIOD_OPTIONS: { value: DashboardPeriod; label: string }[] = [
+  { value: "last_7_days", label: "Last 7 days" },
+  { value: "last_30_days", label: "Last 30 days" },
+  { value: "this_week", label: "This week" },
+  { value: "last_week", label: "Last week" },
+  { value: "this_month", label: "This month" },
+  { value: "last_month", label: "Last month" },
+  { value: "this_year", label: "This year" },
+  { value: "last_year", label: "Last year" },
+  { value: "custom", label: "Custom" },
+];
 
 interface DashboardStats {
   counts: {
@@ -134,37 +156,49 @@ type LinePoint = { month: string; sale: number; purchase: number };
 type BarPoint = { month: string; income: number; expense: number };
 
 const emptyPieData: { name: string; value: number; color?: string }[] = [];
-const emptyCashRows: { accountName: string; amount: string }[] = [];
 
 export function Dashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [ledgerItem, setLedgerItem] = useState<any>(null);
   const currentWarehouseId = useWarehouseStore((s) => s.currentWarehouseId);
+  const [period, setPeriod] = useState<DashboardPeriod>("last_month");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
 
   type TrendPoint = { date: string; value: number };
   type GainLoss = { gain: number; loss: number };
 
+  const warehouseId = currentWarehouseId && currentWarehouseId !== "all" ? currentWarehouseId : undefined;
+  const trendParams: Record<string, string> = {
+    period,
+    ...(warehouseId ? { warehouseId } : {}),
+    ...(period === "custom" && customStart ? { startDate: customStart } : {}),
+    ...(period === "custom" && customEnd ? { endDate: customEnd } : {}),
+  };
+
   const {
     data: trendRaw,
   } = useApi<TrendPoint[]>("/dashboard/inventory/trend", {
-    dependencies: [currentWarehouseId],
+    params: trendParams,
+    dependencies: [currentWarehouseId, period, customStart, customEnd],
   });
 
   const {
     data: gainLossRaw,
   } = useApi<GainLoss>("/dashboard/inventory/gain-loss", {
-    dependencies: [currentWarehouseId],
+    params: trendParams,
+    dependencies: [currentWarehouseId, period, customStart, customEnd],
   });
 
   useEffect(() => {
     setLoading(true);
     api
-      .get("/dashboard/stats")
+      .get("/dashboard/stats", { params: warehouseId ? { warehouseId } : {} })
       .then((res) => setStats(res.data))
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [currentWarehouseId]);
+  }, [warehouseId]);
 
   if (loading && !stats) {
     return (
@@ -233,8 +267,6 @@ export function Dashboard() {
     .map(([name, value]) => ({ name: name.slice(0, 20), value }));
 
   const financeCards = [
-    { title: "OPEN SALE INVOICES", value: "—", variant: "dark" as const, actions: [{ label: "+ NEW", type: "new" as const }, { label: "LIST", type: "list" as const }] },
-    { title: "OPEN PURCHASE INVOICES", value: "—", variant: "dark" as const, actions: [{ label: "+ NEW", type: "new" as const }, { label: "LIST", type: "list" as const }] },
     { title: "TOTAL SALES", value: String(c.totalSales), variant: "green" as const },
     { title: "TOTAL PURCHASES", value: String(c.totalPurchases), variant: "yellow" as const },
     { title: "STOCK UNITS", value: String(c.totalUnits), variant: "white" as const },
@@ -248,15 +280,40 @@ export function Dashboard() {
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold tracking-tight text-gray-900">DASHBOARD</h1>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm text-gray-600">All Employees</span>
-          <select className="rounded border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700">
-            <option>All</option>
+          <span className="text-sm text-gray-600">Period</span>
+          <select
+            value={period}
+            onChange={(e) => setPeriod(e.target.value as DashboardPeriod)}
+            className="rounded border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700"
+          >
+            {PERIOD_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
           </select>
-          <select className="rounded border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700">
-            <option>Last 12 months</option>
-            <option>This month</option>
-            <option>Last month</option>
-          </select>
+          {period === "custom" && (
+            <>
+              <label className="flex items-center gap-2 text-sm text-gray-600">
+                From
+                <input
+                  type="date"
+                  value={customStart}
+                  onChange={(e) => setCustomStart(e.target.value)}
+                  className="rounded border border-gray-200 bg-white px-2 py-1 text-sm text-gray-700"
+                />
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-600">
+                To
+                <input
+                  type="date"
+                  value={customEnd}
+                  onChange={(e) => setCustomEnd(e.target.value)}
+                  className="rounded border border-gray-200 bg-white px-2 py-1 text-sm text-gray-700"
+                />
+              </label>
+            </>
+          )}
         </div>
       </div>
 
@@ -286,17 +343,14 @@ export function Dashboard() {
       <section className="mb-8">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {financeCards.map((card) => (
-            <FinanceCard key={card.title} title={card.title} value={card.value} variant={card.variant} actions={card.actions} />
+            <FinanceCard key={card.title} title={card.title} value={card.value} variant={card.variant} />
           ))}
         </div>
       </section>
 
       {/* Pie + Cash table */}
-      <section className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-3">
+      <section className="mb-8">
         <DashboardPieChart data={pieData.length ? pieData : emptyPieData} title="INVENTORY BY PRODUCT" />
-        <div className="lg:col-span-2">
-          <CashBankTable rows={emptyCashRows} total="—" title="CASH / CASH EQUIVALENTS" />
-        </div>
       </section>
 
       {/* Inventory-specific low stock and movements moved to Inventory Dashboard */}

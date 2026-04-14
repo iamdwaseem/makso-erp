@@ -6,7 +6,7 @@
 import { PrismaClient, LedgerAction, UserRole } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
-import { lettersFromText, encodeSeq2 } from "../src/utils/sku-format.js";
+import { alnumFromText, normalizeSizeToken } from "../src/utils/sku-format.js";
 import { reEnableRlsOnSeedTables, truncateAllApplicationTables } from "./seed-truncate.js";
 
 const prisma = new PrismaClient();
@@ -24,21 +24,23 @@ function chunks<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
-function allocProductSku(productName: string, tally: Map<string, number>): string {
-  const name5 = lettersFromText(productName, 5);
-  const idx = tally.get(name5) ?? 0;
-  tally.set(name5, idx + 1);
-  return `${name5}-${encodeSeq2(idx)}`;
+function cleanProductCode(raw: string): string {
+  return String(raw ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
 }
 
-function allocVariantSku(productName: string, color: string, size: string, tally: Map<string, number>): string {
-  const name5 = lettersFromText(productName, 5);
-  const color3 = lettersFromText(color, 3);
-  const size3 = lettersFromText(size.trim().length > 0 ? size.trim() : "NOS", 3);
-  const stem = `${name5}-${color3}-${size3}`;
-  const idx = tally.get(stem) ?? 0;
-  tally.set(stem, idx + 1);
-  return `${stem}-${encodeSeq2(idx)}`;
+function allocProductCode(i: number): string {
+  return `PRD-${String(i + 1).padStart(6, "0")}`;
+}
+
+function allocVariantSku(productName: string, color: string, productCode: string, size: string): string {
+  const name4 = alnumFromText(productName, 4);
+  const color3 = alnumFromText(color, 3);
+  const code = cleanProductCode(productCode) || "CODE";
+  const sizeTok = normalizeSizeToken(size);
+  return `${name4}-${color3}${code}-${sizeTok}`;
 }
 
 async function createManyInBatches(model: any, data: any[]) {
@@ -108,6 +110,7 @@ async function main() {
     id: crypto.randomUUID(),
     organization_id: org.id,
     name: `Supplier Logistics ${i + 1}`,
+    code: i % 4 === 0 ? null : `SUP-${String(i + 1).padStart(4, "0")}`,
     email: `contact${i + 1}@supplier.wareflow.com`,
     phone: `+97150${String(1000000 + i).slice(-7)}`,
     address: `Industrial Zone ${i % 25}, UAE`
@@ -129,8 +132,6 @@ async function main() {
   const brands = ["Samsung", "Apple", "Dell", "Sony", "Nikon", "HP", "Cisco"];
   const colors = ["Black", "Silver", "Blue", "White", "Green"];
 
-  const productSkuTally = new Map<string, number>();
-  const variantStemTally = new Map<string, number>();
   const productsData = Array.from({ length: TARGET_COUNT }).map((_, i) => {
     const type = productTypes[i % productTypes.length];
     const brand = brands[i % brands.length];
@@ -139,7 +140,7 @@ async function main() {
       id: crypto.randomUUID(),
       organization_id: org.id,
       name,
-      sku: allocProductSku(name, productSkuTally),
+      sku: allocProductCode(i),
       description: `Professional ${type} by ${brand}`
     };
   });
@@ -152,7 +153,7 @@ async function main() {
       organization_id: org.id,
       product_id: p.id,
       color,
-      sku: allocVariantSku(p.name, color, "", variantStemTally)
+      sku: allocVariantSku(p.name, color, p.sku, "")
     };
   });
   await createManyInBatches(prisma.variant, variantsData);

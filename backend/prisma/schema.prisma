@@ -55,6 +55,7 @@ model Warehouse {
   name              String
   code              String
   location          String?
+  phone             String?
   created_at        DateTime           @default(now())
   updated_at        DateTime           @updatedAt
   dashboard_metrics DashboardMetrics[]
@@ -78,13 +79,15 @@ model Supplier {
   id              String       @id @default(uuid()) @db.Uuid
   organization_id String       @db.Uuid
   name            String
-  phone           String
+  code            String?
+  phone           String?
   email           String?
   address         String?
   created_at      DateTime     @default(now())
   purchases       Purchase[]
   organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
 
+  @@unique([organization_id, code])
   @@index([organization_id])
   @@map("suppliers")
 }

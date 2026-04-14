@@ -34,23 +34,25 @@ export class WarehouseRepository extends BaseRepository {
     });
   }
 
-  async create(data: { name: string; code: string; location?: string }): Promise<Warehouse> {
+  async create(data: { name: string; code: string; location?: string; phone?: string }): Promise<Warehouse> {
     return (this.prisma as any).warehouse.create({
       data: this.tenantData({
         name: data.name,
         code: data.code,
         location: data.location || null,
+        phone: data.phone || null,
       }),
     });
   }
 
-  async update(id: string, data: Partial<{ name: string; code: string; location: string }>): Promise<Warehouse> {
+  async update(id: string, data: Partial<{ name: string; code: string; location: string; phone: string }>): Promise<Warehouse> {
     return (this.prisma as any).warehouse.update({
       where: this.tenantWhere({ id }),
       data: {
         name: data.name,
         code: data.code,
         location: data.location,
+        phone: data.phone,
       },
     });
   }

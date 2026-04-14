@@ -16,11 +16,17 @@ export class SaleController extends BaseController {
 
   getAllSales = async (req: Request, res: Response) => {
     try {
-      const { page, limit } = this.getPagination(req);
+      const { page, limit, search } = this.getPagination(req);
       const includeDeleted = String(req.query.includeDeleted ?? "").toLowerCase() === "true";
       const deletedOnly = String(req.query.deletedOnly ?? "").toLowerCase() === "true";
       const service = this.getService(req);
-      const result = await service.getAllSales({ page, limit, includeDeleted, deletedOnly });
+      const result = await service.getAllSales({
+        page,
+        limit,
+        includeDeleted,
+        deletedOnly,
+        search: search?.trim() || undefined,
+      });
       return res.status(200).json(result);
     } catch (error: any) {
       return this.handleError(res, error);

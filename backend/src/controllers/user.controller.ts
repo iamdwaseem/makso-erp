@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { BaseController } from "./BaseController.js";
 import { UserService } from "../services/user.service.js";
 import { AuthRequest } from "../middleware/auth.middleware.js";
+import { z } from "zod";
 
 export class UserController extends BaseController {
   /**
@@ -104,6 +105,58 @@ export class UserController extends BaseController {
       return res.status(204).send();
     } catch (error: any) {
       return this.handleError(res, error);
+    }
+  }
+
+  async updateUser(req: Request, res: Response) {
+    try {
+      const id = req.params.id as string;
+      const organizationId = this.getTenant(req);
+      const service = new UserService(organizationId);
+      const caller = req as AuthRequest;
+
+      const bodySchema = z
+        .object({
+          name: z.string().optional(),
+          email: z.string().email().optional(),
+          role: z.enum(["ADMIN", "MANAGER", "STAFF"]).optional(),
+        })
+        .strict();
+      const data = bodySchema.parse(this.getBody(req));
+
+      const updated = await service.updateUser(
+        id,
+        data,
+        { id: caller.userId, role: caller.userRole as any }
+      );
+      return this.success(res, updated);
+    } catch (error: any) {
+      return this.handleError(res, error, "User not found");
+    }
+  }
+
+  async resetPassword(req: Request, res: Response) {
+    try {
+      const id = req.params.id as string;
+      const organizationId = this.getTenant(req);
+      const service = new UserService(organizationId);
+      const caller = req as AuthRequest;
+
+      const bodySchema = z
+        .object({
+          newPassword: z.string().min(8, "Password must be at least 8 characters"),
+        })
+        .strict();
+      const { newPassword } = bodySchema.parse(this.getBody(req));
+
+      const result = await service.resetPassword(
+        id,
+        newPassword,
+        { id: caller.userId, role: caller.userRole as any }
+      );
+      return this.success(res, result);
+    } catch (error: any) {
+      return this.handleError(res, error, "Failed to reset password");
     }
   }
 }

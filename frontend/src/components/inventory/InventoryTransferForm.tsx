@@ -91,6 +91,12 @@ export function InventoryTransferForm({
       .catch(() => setVariants([]));
   }, []);
 
+  // Keep form in sync when parent passes defaults after async load (detail page) or remounts.
+  useEffect(() => {
+    setSourceWarehouseId(defaultSourceId);
+    setTargetWarehouseId(defaultTargetId);
+  }, [defaultSourceId, defaultTargetId]);
+
   const patchRow = (index: number, patch: Partial<TransferLine>) => {
     setItemRows((prev) => {
       const next = [...prev];

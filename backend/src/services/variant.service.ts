@@ -18,10 +18,13 @@ import {
   variantSizeCatalogChanged,
 } from "../utils/catalog-compare.js";
 import { recordSkuHistoryIfChanged } from "../utils/sku-history.js";
-import { escapeRegex, lettersFromText, nextSeq2ForPattern } from "../utils/sku-format.js";
+import { escapeRegex, alnumFromText, nextSeq2ForPattern, normalizeSizeToken } from "../utils/sku-format.js";
 
 /**
- * Variant auto-SKU: 5 letters (product name) + 3 (color) + 3 (size, NOS if empty) + 2-letter sequence.
+ * Variant auto-SKU:
+ *   [PRODNAME-4]-[COLOR-3][PRODUCTCODE]-[SIZE]
+ * If collisions happen, append a 2-letter sequence:
+ *   [PRODNAME-4]-[COLOR-3][PRODUCTCODE]-[SIZE]-[AA]
  */
 async function generateVariantSku(
   productId: string,
@@ -33,15 +36,15 @@ async function generateVariantSku(
 ): Promise<string> {
   const productRepo = new ProductRepository(db, organizationId);
   const product = await productRepo.findById(productId);
-  const name5 = lettersFromText(product?.name ?? "", 5);
-  const color3 = lettersFromText(color, 3);
-  const sizeTrim = (size ?? "").trim();
-  const size3 = lettersFromText(sizeTrim.length > 0 ? sizeTrim : "NOS", 3);
-  const stem = `${name5}-${color3}-${size3}`;
+  const name4 = alnumFromText(product?.name ?? "", 4);
+  const color3 = alnumFromText(color, 3);
+  const productCode = normalizeAndValidateSkuInput(product?.sku ?? "");
+  const sizeToken = normalizeSizeToken(size);
+  const base = `${name4}-${color3}${productCode}-${sizeToken}`;
 
   const where: Record<string, unknown> = {
     organization_id: organizationId,
-    sku: { startsWith: `${stem}-` },
+    sku: { startsWith: base },
   };
   if (excludeVariantId) {
     where.id = { not: excludeVariantId };
@@ -52,9 +55,15 @@ async function generateVariantSku(
     select: { sku: true },
   });
   const skus = existing.map((v: { sku: string }) => v.sku);
-  const seqRe = new RegExp(`^${escapeRegex(stem)}-([A-Z]{2})$`);
+  const exactExists = skus.includes(base);
+  if (!exactExists) {
+    assertGeneratedSkuFormat(base);
+    return base;
+  }
+
+  const seqRe = new RegExp(`^${escapeRegex(base)}-([A-Z]{2})$`);
   const seq = nextSeq2ForPattern(skus, seqRe);
-  const sku = `${stem}-${seq}`;
+  const sku = `${base}-${seq}`;
   assertGeneratedSkuFormat(sku);
   return sku;
 }

@@ -20,6 +20,18 @@ function toCreateBody(payload: TransferCreatePayload) {
   };
 }
 
+/** POST /inventory/transfers returns the transfer object at the root of the JSON body (camelCase). */
+function transferIdFromCreateResponse(data: unknown): string | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const o = data as Record<string, unknown>;
+  if (typeof o.id === "string") return o.id;
+  const inner = o.data;
+  if (inner && typeof inner === "object" && typeof (inner as Record<string, unknown>).id === "string") {
+    return (inner as Record<string, unknown>).id as string;
+  }
+  return undefined;
+}
+
 export function InventoryTransfersPage() {
   const [rows, setRows] = useState<TransferRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,9 +83,9 @@ export function InventoryTransfersPage() {
 
   const handleComplete = async (payload: TransferCreatePayload) => {
     const createRes = await api.post("/inventory/transfers", toCreateBody(payload));
-    const id = createRes.data?.id as string | undefined;
-    if (!id) throw new Error("No transfer id returned");
-    await api.post(`/inventory/transfers/${id}/submit`, {});
+    const tid = transferIdFromCreateResponse(createRes.data);
+    if (!tid) throw new Error("No transfer id returned");
+    await api.post(`/inventory/transfers/${tid}/submit`, {});
     load();
   };
 

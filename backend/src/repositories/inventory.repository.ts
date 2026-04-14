@@ -69,17 +69,82 @@ export class InventoryRepository extends BaseRepository {
 
     const records = paginated.data;
     const variantIds = records.map((r: any) => r.variant_id);
-    
-    const relevantPurchaseItems = await (this.prisma as any).purchaseItem.findMany({
-      where: this.tenantWhere({ variant_id: { in: variantIds } }),
-      include: { purchase: { include: { supplier: true } } },
-      orderBy: { purchase: { created_at: "desc" } },
-    });
+
+    const variantIdList = variantIds
+      .filter((v: any): v is string => typeof v === "string" && /^[0-9a-fA-F-]{36}$/.test(v))
+      .map((v: string) => `'${v}'::uuid`)
+      .join(",");
+
+    // Fetch only the latest purchase/supplier per variant (much less data than fetching all purchase_items).
+    const latestPurchases = variantIdList.length
+      ? await (this.prisma as any).$queryRawUnsafe(
+          `
+          SELECT DISTINCT ON (pi.variant_id)
+            pi.variant_id,
+            p.id            AS purchase_id,
+            p.invoice_number,
+            p.created_at    AS purchase_created_at,
+            s.id            AS supplier_id,
+            s.name          AS supplier_name,
+            s.code          AS supplier_code,
+            s.phone         AS supplier_phone,
+            s.address       AS supplier_address
+          FROM purchase_items pi
+          JOIN purchases p ON p.id = pi.purchase_id
+          JOIN suppliers s ON s.id = p.supplier_id
+          WHERE pi.organization_id = $1::uuid
+            AND pi.variant_id IN (${variantIdList})
+          ORDER BY pi.variant_id, p.created_at DESC;
+        `,
+          this.organizationId
+        )
+      : [];
 
     const supplierByVariant = new Map<string, any>();
-    for (const item of relevantPurchaseItems) {
-      if (!supplierByVariant.has(item.variant_id)) {
-        supplierByVariant.set(item.variant_id, item.purchase?.supplier ?? null);
+    const lastPurchaseByVariant = new Map<string, { id: string; invoice_number: string; created_at: Date }>();
+    for (const row of latestPurchases as any[]) {
+      supplierByVariant.set(row.variant_id, row.supplier_id ? {
+        id: row.supplier_id,
+        name: row.supplier_name,
+        code: row.supplier_code,
+        phone: row.supplier_phone,
+        address: row.supplier_address,
+      } : null);
+      if (row.purchase_id) {
+        lastPurchaseByVariant.set(row.variant_id, {
+          id: row.purchase_id,
+          invoice_number: row.invoice_number,
+          created_at: row.purchase_created_at,
+        });
+      }
+    }
+
+    const latestSales = variantIdList.length
+      ? await (this.prisma as any).$queryRawUnsafe(
+          `
+          SELECT DISTINCT ON (si.variant_id)
+            si.variant_id,
+            s.id            AS sale_id,
+            s.invoice_number,
+            s.created_at    AS sale_created_at
+          FROM sale_items si
+          JOIN sales s ON s.id = si.sale_id
+          WHERE si.organization_id = $1::uuid
+            AND si.variant_id IN (${variantIdList})
+          ORDER BY si.variant_id, s.created_at DESC;
+        `,
+          this.organizationId
+        )
+      : [];
+
+    const lastSaleByVariant = new Map<string, { id: string; invoice_number: string; created_at: Date }>();
+    for (const row of latestSales as any[]) {
+      if (row.sale_id) {
+        lastSaleByVariant.set(row.variant_id, {
+          id: row.sale_id,
+          invoice_number: row.invoice_number,
+          created_at: row.sale_created_at,
+        });
       }
     }
 
@@ -89,6 +154,8 @@ export class InventoryRepository extends BaseRepository {
         ...inv,
         quantity: inv.total_quantity, 
         supplier: supplierByVariant.get(inv.variant_id) ?? null,
+        lastPurchase: lastPurchaseByVariant.get(inv.variant_id) ?? null,
+        lastSale: lastSaleByVariant.get(inv.variant_id) ?? null,
       }))
     };
   }
@@ -96,14 +163,72 @@ export class InventoryRepository extends BaseRepository {
   async findByVariantId(variantId: string, warehouseId?: string): Promise<any | null> {
     const record = await (this.prisma as any).inventorySummary.findFirst({
       where: this.tenantWhere({ variant_id: variantId, warehouse_id: warehouseId }),
-      include: { variant: true, warehouse: true },
+      include: { variant: { include: { product: true } }, warehouse: true },
     });
 
     if (!record) return null;
 
+    const lastPurchaseRow = await (this.prisma as any).$queryRaw`
+      SELECT
+        p.id            AS purchase_id,
+        p.invoice_number,
+        p.created_at    AS purchase_created_at,
+        s.id            AS supplier_id,
+        s.name          AS supplier_name,
+        s.code          AS supplier_code,
+        s.phone         AS supplier_phone,
+        s.address       AS supplier_address
+      FROM purchase_items pi
+      JOIN purchases p ON p.id = pi.purchase_id
+      JOIN suppliers s ON s.id = p.supplier_id
+      WHERE pi.organization_id = ${this.organizationId}::uuid
+        AND pi.variant_id = ${variantId}::uuid
+      ORDER BY p.created_at DESC
+      LIMIT 1;
+    `;
+
+    const lastSaleRow = await (this.prisma as any).$queryRaw`
+      SELECT
+        s.id            AS sale_id,
+        s.invoice_number,
+        s.created_at    AS sale_created_at
+      FROM sale_items si
+      JOIN sales s ON s.id = si.sale_id
+      WHERE si.organization_id = ${this.organizationId}::uuid
+        AND si.variant_id = ${variantId}::uuid
+      ORDER BY s.created_at DESC
+      LIMIT 1;
+    `;
+
+    const lp = Array.isArray(lastPurchaseRow) ? lastPurchaseRow[0] : (lastPurchaseRow as any);
+    const ls = Array.isArray(lastSaleRow) ? lastSaleRow[0] : (lastSaleRow as any);
+
     return {
       ...record,
       quantity: record.total_quantity,
+      supplier: lp?.supplier_id
+        ? {
+            id: lp.supplier_id,
+            name: lp.supplier_name,
+            code: lp.supplier_code,
+            phone: lp.supplier_phone,
+            address: lp.supplier_address,
+          }
+        : null,
+      lastPurchase: lp?.purchase_id
+        ? {
+            id: lp.purchase_id,
+            invoice_number: lp.invoice_number,
+            created_at: lp.purchase_created_at,
+          }
+        : null,
+      lastSale: ls?.sale_id
+        ? {
+            id: ls.sale_id,
+            invoice_number: ls.invoice_number,
+            created_at: ls.sale_created_at,
+          }
+        : null,
     };
   }
 

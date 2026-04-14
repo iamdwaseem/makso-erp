@@ -35,11 +35,29 @@ export class SaleRepository extends BaseRepository {
     limit = 50,
     includeDeleted = false,
     deletedOnly = false,
-  }: { page?: number; limit?: number; includeDeleted?: boolean; deletedOnly?: boolean } = {}) {
+    search,
+  }: { page?: number; limit?: number; includeDeleted?: boolean; deletedOnly?: boolean; search?: string } = {}) {
     const vis = this.saleVisibilityWhere(includeDeleted, deletedOnly);
+    const whereBase = this.tenantWhere(vis);
+    const q = search?.trim().slice(0, 200) ?? "";
+
+    let where: Record<string, unknown> = whereBase;
+    if (q.length > 0) {
+      const or: Record<string, unknown>[] = [
+        { invoice_number: { contains: q, mode: "insensitive" } },
+        { customer: { name: { contains: q, mode: "insensitive" } } },
+      ];
+      const uuidRe =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (uuidRe.test(q)) {
+        or.push({ id: q });
+      }
+      where = { ...whereBase, OR: or };
+    }
+
     const paginated = await this.paginate<any>(
       (this.prisma as any).sale,
-      this.tenantWhere(vis),
+      where,
       page,
       limit,
       {
@@ -92,6 +110,7 @@ export class SaleRepository extends BaseRepository {
       where: this.tenantWhere(base),
       include: {
         customer: true,
+        warehouse: true,
         items: { include: { variant: { include: { product: true } } } },
         deletedBy: { select: { id: true, name: true, email: true } },
       },

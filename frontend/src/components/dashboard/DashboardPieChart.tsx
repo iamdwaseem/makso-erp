@@ -2,19 +2,16 @@ import { PieChart as RechartsPieChart, Pie, Cell, ResponsiveContainer, Legend, T
 
 export type PieChartDataPoint = { name: string; value: number; color?: string };
 
-type Props = { data: PieChartDataPoint[]; title: string };
+type Props = { data: PieChartDataPoint[]; title: string; valueSuffix?: string };
 
 const DEFAULT_COLORS = ["#7dd3fc", "#dc2626", "#0d9488", "#9ca3af", "#f97316"];
 
-export function DashboardPieChart({ data, title }: Props) {
+export function DashboardPieChart({ data, title, valueSuffix = "" }: Props) {
   const chartData = data.map((d, i) => ({ ...d, color: d.color || DEFAULT_COLORS[i % DEFAULT_COLORS.length] }));
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
       <div className="mb-4 flex items-center justify-between">
         <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-700">{title}</h3>
-        <select className="rounded border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600">
-          <option>Last months</option>
-        </select>
       </div>
       <div className="h-[280px]">
         <ResponsiveContainer width="100%" height="100%">
@@ -24,7 +21,7 @@ export function DashboardPieChart({ data, title }: Props) {
                 <Cell key={`cell-${index}`} fill={entry.color} />
               ))}
             </Pie>
-            <Tooltip formatter={(value) => [`${Number(value).toLocaleString()} AED`, ""]} />
+            <Tooltip formatter={(value) => [`${Number(value).toLocaleString()}${valueSuffix}`, ""]} />
             <Legend wrapperStyle={{ fontSize: 11 }} />
           </RechartsPieChart>
         </ResponsiveContainer>

@@ -40,12 +40,12 @@ export class WarehouseController extends BaseController {
 
   createWarehouse = async (req: Request, res: Response) => {
     try {
-      const { name, code, location } = req.body;
+      const { name, code, location, phone } = req.body;
       if (!name || !code) {
         return res.status(400).json({ error: "Name and code are required" });
       }
       const service = this.getService(req);
-      const warehouse = await service.createWarehouse({ name, code, location });
+      const warehouse = await service.createWarehouse({ name, code, location, phone });
       return this.success(res, warehouse, 201);
     } catch (error: any) {
       return this.handleError(res, error);

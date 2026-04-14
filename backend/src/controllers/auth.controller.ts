@@ -1,12 +1,10 @@
 import { Request, Response } from "express";
-import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { toCamelCase } from "../utils/mapper.js";
 import { getEnv } from "../config/env.js";
-
-const prisma = new PrismaClient();
+import prisma from "../lib/prisma.js";
 
 const RegisterSchema = z.object({
   name: z.string().min(1, "Name is required"),

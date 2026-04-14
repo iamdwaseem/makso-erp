@@ -13,6 +13,23 @@ export function lettersFromText(label: string, length: number): string {
   return letters.padEnd(length, "X");
 }
 
+/** A–Z0–9 only from label; pad with X on the right to exact length. */
+export function alnumFromText(label: string, length: number): string {
+  const chars = (label ?? "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, length);
+  return chars.padEnd(length, "X");
+}
+
+export function normalizeSizeToken(raw: string | null | undefined): string {
+  const token = String(raw ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  return token.length > 0 ? token : "STD";
+}
+
 export function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -24,6 +24,7 @@
     "prisma:deploy": "prisma migrate deploy",
     "seed:makso": "tsx prisma/seed-makso.ts",
     "seed:demo": "tsx prisma/seed.ts",
+    "seed:current": "tsx prisma/seed-current.ts",
     "seed:inventory": "tsx src/seeds/inventory.seed.ts"
   },
   "keywords": [],

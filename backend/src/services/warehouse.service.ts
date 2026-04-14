@@ -25,11 +25,11 @@ export class WarehouseService {
     return warehouse;
   }
 
-  async createWarehouse(data: { name: string; code: string; location?: string }) {
+  async createWarehouse(data: { name: string; code: string; location?: string; phone?: string }) {
     return this.warehouseRepository.create(data);
   }
 
-  async updateWarehouse(id: string, data: Partial<{ name: string; code: string; location: string }>) {
+  async updateWarehouse(id: string, data: Partial<{ name: string; code: string; location: string; phone: string }>) {
     await this.getWarehouseById(id);
     return this.warehouseRepository.update(id, data);
   }

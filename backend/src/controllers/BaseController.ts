@@ -75,6 +75,13 @@ export abstract class BaseController {
       return res.status(400).json({ error: error.message });
     }
 
+    if (
+      error.message?.includes("You are not allowed") ||
+      error.message?.includes("Access to warehouse denied")
+    ) {
+      return res.status(403).json({ error: error.message });
+    }
+
     if (error.message === notFoundMessage || error.message?.includes("not found")) {
       return res.status(404).json({ error: error.message });
     }

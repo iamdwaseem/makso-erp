@@ -10,6 +10,10 @@ router.get("/users", authorizeRole("ADMIN", "MANAGER"), (req, res) => userContro
 router.post("/users", authorizeRole("ADMIN", "MANAGER"), (req, res) => userController.createUser(req, res));
 router.delete("/users/:id", authorizeRole("ADMIN", "MANAGER"), (req, res) => userController.deleteUser(req, res));
 
+// User edit + password reset (self-service supported; role-based restrictions enforced in controller/service)
+router.put("/users/:id", (req, res) => userController.updateUser(req, res));
+router.post("/users/:id/reset-password", (req, res) => userController.resetPassword(req, res));
+
 router.get("/users/:id/warehouses", authorizeRole("ADMIN", "MANAGER"), (req, res) => userController.getUserWarehouses(req, res));
 router.post("/users/:id/warehouses", authorizeRole("ADMIN", "MANAGER"), (req, res) => userController.assignWarehouse(req, res));
 router.delete("/users/:id/warehouses/:warehouseId", authorizeRole("ADMIN", "MANAGER"), (req, res) => userController.unassignWarehouse(req, res));

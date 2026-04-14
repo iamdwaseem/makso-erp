@@ -28,6 +28,7 @@ import { authenticate } from "./middleware/auth.middleware.js";
 import { resolveTenant } from "./middleware/tenant.middleware.js";
 import { authorizeWarehouseAccess } from "./middleware/warehouseAccess.middleware.js";
 import { getEnv } from "./config/env.js";
+import { prismaBase } from "./lib/prisma.js";
 
 const app = express();
 const env = getEnv();
@@ -77,11 +78,8 @@ app.get("/health", async (req, res) => {
   let dbStatus = "ok";
   let dbLatencyMs = 0;
   try {
-    const { PrismaClient } = await import("@prisma/client");
-    const p = new PrismaClient();
-    await p.$queryRaw`SELECT 1`;
+    await prismaBase.$queryRaw`SELECT 1`;
     dbLatencyMs = Date.now() - start;
-    await p.$disconnect();
   } catch {
     dbStatus = "error";
   }

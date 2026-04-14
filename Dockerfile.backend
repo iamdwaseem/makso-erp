@@ -23,8 +23,11 @@ RUN apk add --no-cache openssl
 
 COPY --from=base /app/backend/node_modules ./node_modules
 COPY --from=base /app/backend/dist ./dist
+COPY --from=base /app/backend/src ./src
 COPY --from=base /app/backend/prisma ./prisma
 COPY backend/package*.json ./
+# Seed (tsx prisma/seed-makso.ts) imports from src/ and reads makso-products.csv from cwd
+COPY makso-products.csv ./makso-products.csv
 
 EXPOSE 4000
 

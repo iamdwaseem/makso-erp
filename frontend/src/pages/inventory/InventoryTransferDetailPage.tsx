@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import api from "../../api";
 import { InventoryTransferForm, type TransferCreatePayload } from "../../components/inventory/InventoryTransferForm";
@@ -48,7 +48,20 @@ export function InventoryTransferDetailPage() {
     setError(null);
     try {
       const res = await api.get(`/inventory/transfers/${id}`);
-      setTransfer(res.data);
+      const raw = res.data as Record<string, unknown> | undefined;
+      let body: TransferDetail | null = null;
+      if (raw && typeof raw === "object") {
+        if (typeof raw.id === "string") body = raw as unknown as TransferDetail;
+        else if (raw.data && typeof raw.data === "object" && typeof (raw.data as { id?: string }).id === "string") {
+          body = raw.data as TransferDetail;
+        }
+      }
+      if (!body) {
+        setError("Invalid transfer response");
+        setTransfer(null);
+      } else {
+        setTransfer(body);
+      }
     } catch (e: unknown) {
       const err = e as { response?: { data?: { error?: string } }; message?: string };
       setError(err.response?.data?.error || err.message || "Failed to load transfer");
@@ -67,8 +80,9 @@ export function InventoryTransferDetailPage() {
   const targetId =
     transfer?.targetWarehouseId ?? transfer?.target_warehouse_id ?? transfer?.targetWarehouse?.id ?? "";
 
-  const defaultRows =
-    transfer?.items?.map((line) => {
+  const defaultRows = useMemo(() => {
+    if (!transfer?.items?.length) return undefined;
+    return transfer.items.map((line) => {
       const sku = line.variant?.sku ?? "";
       const name = line.variant?.product?.name;
       return {
@@ -77,7 +91,8 @@ export function InventoryTransferDetailPage() {
         quantity: String(line.quantity ?? ""),
         resolvedLabel: name && sku ? `${name} · ${sku}` : sku || undefined,
       };
-    }) ?? [];
+    });
+  }, [transfer?.id, transfer?.items]);
 
   const handleSaveDraft = async (payload: TransferCreatePayload) => {
     if (!id) return;
@@ -179,10 +194,10 @@ export function InventoryTransferDetailPage() {
                 to the destination.
               </p>
               <InventoryTransferForm
-                key={formKey}
+                key={`${id}-${formKey}-${sourceId}-${targetId}-${defaultRows?.length ?? 0}`}
                 defaultSourceId={sourceId}
                 defaultTargetId={targetId}
-                defaultRows={defaultRows.length ? defaultRows : undefined}
+                defaultRows={defaultRows}
                 showDraftButton
                 showCompleteButton
                 onSaveDraft={handleSaveDraft}

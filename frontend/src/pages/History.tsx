@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { Link } from "react-router-dom";
 import { useWarehouseStore } from "../store/warehouseStore";
 import { useApi } from "../hooks/useApi";
 import api from "../api";
+import { FEATURE_FLAGS } from "../featureFlags";
 
 type PeriodFilter = "day" | "week" | "month" | "year" | "all" | "custom";
 
@@ -289,15 +291,30 @@ export function History() {
               <div className="flex gap-3 p-5 border-t border-gray-100 bg-gray-50 rounded-b-2xl">
                 <button onClick={() => setSelectedInvoice(null)}
                   className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-xl hover:bg-gray-300 text-sm font-medium">Close</button>
-                <button onClick={() => {
-                  const printArea = document.getElementById("invoice-print-area");
-                  if (!printArea) return;
-                  const w = window.open("", "_blank");
-                  if (!w) return;
-                  w.document.write(`<!DOCTYPE html><html><head><title>Invoice</title></head><body>${printArea.innerHTML}<script>window.print();window.close();<\/script></body></html>`);
-                  w.document.close();
-                }}
-                  className="flex-1 bg-blue-600 text-white py-3 rounded-xl hover:bg-blue-700 text-sm font-medium">🖨️ Print Invoice</button>
+                {isEntry ? (
+                  FEATURE_FLAGS.printInvoice ? (
+                    <Link
+                      to={`/inventory/print-invoice?id=${encodeURIComponent(String(inv.id))}`}
+                      className="flex-1 bg-blue-600 text-white py-3 rounded-xl hover:bg-blue-700 text-sm font-medium text-center"
+                    >
+                      🖨️ Edit & Print
+                    </Link>
+                  ) : (
+                    <Link
+                      to={`/inventory/receipt-notes/${encodeURIComponent(String(inv.id))}`}
+                      className="flex-1 bg-blue-600 text-white py-3 rounded-xl hover:bg-blue-700 text-sm font-medium text-center"
+                    >
+                      View GRN
+                    </Link>
+                  )
+                ) : (
+                  <Link
+                    to={`/inventory/print-delivery-note?id=${encodeURIComponent(String(inv.id))}`}
+                    className="flex-1 bg-blue-600 text-white py-3 rounded-xl hover:bg-blue-700 text-sm font-medium text-center"
+                  >
+                    🖨️ Edit & Print
+                  </Link>
+                )}
               </div>
             </div>
           </div>

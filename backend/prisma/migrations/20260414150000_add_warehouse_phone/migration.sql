@@ -1,0 +1,3 @@
+ALTER TABLE "warehouses"
+  ADD COLUMN IF NOT EXISTS "phone" TEXT;
+

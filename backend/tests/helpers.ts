@@ -56,17 +56,31 @@ export function buildApp() {
 
 /** Wipe test data in dependency order */
 export async function cleanDb() {
-  const tables = [
-    "dashboard_metrics", "scan_logs", "inventory_ledger", "inventory_summaries",
-    "inventory", "purchase_items", "sale_items", "purchases", "sales",
-    "transfer_items", "transfers",
-    "variants", "products", "customers", "suppliers", "update_requests", "sku_history", "user_warehouses",
-    "warehouses", "users", "organizations",
-  ];
-
-  for (const table of tables) {
-    await prisma.$executeRawUnsafe(`ALTER TABLE "${table}" DISABLE ROW LEVEL SECURITY;`);
-    await prisma.$executeRawUnsafe(`TRUNCATE TABLE "${table}" CASCADE;`);
-    await prisma.$executeRawUnsafe(`ALTER TABLE "${table}" ENABLE ROW LEVEL SECURITY;`);
-  }
+  // Single TRUNCATE reduces lock churn and avoids deadlocks under parallel tests.
+  // RLS does not apply to TRUNCATE in our test DB setup.
+  await prisma.$executeRawUnsafe(`
+    TRUNCATE TABLE
+      "dashboard_metrics",
+      "scan_logs",
+      "inventory_ledger",
+      "inventory_summaries",
+      "inventory",
+      "purchase_items",
+      "sale_items",
+      "purchases",
+      "sales",
+      "transfer_items",
+      "transfers",
+      "variants",
+      "products",
+      "customers",
+      "suppliers",
+      "update_requests",
+      "sku_history",
+      "user_warehouses",
+      "warehouses",
+      "users",
+      "organizations"
+    CASCADE;
+  `);
 }

@@ -25,6 +25,7 @@ export class SaleService {
     limit?: number;
     includeDeleted?: boolean;
     deletedOnly?: boolean;
+    search?: string;
   }) {
     return this.saleRepository.findAll(opts);
   }

@@ -101,7 +101,7 @@ describe("SKU Auto-generation", () => {
     }
   });
 
-  it("variant SKU is name5-color3-size3-seq2 (empty size → NOS)", async () => {
+  it("variant SKU is NAME4-COL3{PRODUCTCODE}-SIZE (empty size → STD)", async () => {
     const prodRes = await request(app)
       .post("/api/products")
       .set("Authorization", `Bearer ${token}`)
@@ -114,7 +114,8 @@ describe("SKU Auto-generation", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({ product_id: productId, color: "Jet Black" });
     expect(varRes.status).toBe(201);
-    expect(varRes.body.sku).toBe("ZIPWA-JET-NOS-AA");
+    // product code is the full Product.sku (here: ZIPWA-??), size defaults to STD
+    expect(varRes.body.sku).toMatch(/^ZIPW-JETZIPWA-[A-Z]{2}-STD$/);
   });
 
   it("variant explicit SKU with invalid characters is rejected", async () => {
@@ -140,12 +141,14 @@ describe("SKU Auto-generation", () => {
       .post("/api/variants")
       .set("Authorization", `Bearer ${token}`)
       .send({ product_id: productId, color: "Red" });
-    expect(v1.body.sku).toBe("CANVA-RED-NOS-AA");
+    expect(v1.body.sku).toMatch(/^CANV-REDCANVA-[A-Z]{2}-STD$/);
 
     const v2 = await request(app)
       .post("/api/variants")
       .set("Authorization", `Bearer ${token}`)
       .send({ product_id: productId, color: "Red" });
-    expect(v2.body.sku).toBe("CANVA-RED-NOS-AB");
+    // collision suffix appended after size token
+    expect(v2.body.sku).toMatch(/^CANV-REDCANVA-[A-Z]{2}-STD-[A-Z]{2}$/);
+    expect(v2.body.sku).not.toBe(v1.body.sku);
   });
 });

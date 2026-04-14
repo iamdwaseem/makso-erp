@@ -1,11 +1,33 @@
 import axios from 'axios';
 
+/** True if this cannot work from a real user’s browser in production (causes CORS / wrong host). */
+function isLocalhostApiUrl(url: string): boolean {
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(\b|\/|:)/i.test(url);
+}
+
+/**
+ * API base URL for axios.
+ * - Dev: prefer Vite proxy via same-origin `/api` unless you set a non-local override (e.g. LAN IP).
+ * - Prod: use `VITE_API_URL` only when it is a real deployed origin (e.g. `https://api.example.com` or `/api`).
+ *   Values like `http://localhost:4000` are ignored so production never calls localhost (fixes CORS on DO, etc.).
+ */
 function resolveApiBase(): string {
-  const fromEnv = import.meta.env.VITE_API_URL as string | undefined;
-  if (fromEnv && String(fromEnv).trim()) return String(fromEnv).replace(/\/$/, '');
-  // Dev: same-origin /api → Vite proxy to backend (avoids CORS and port mismatch).
-  if (import.meta.env.DEV) return '/api';
-  return '/api';
+  const raw = String(import.meta.env.VITE_API_URL ?? "").trim().replace(/\/$/, "");
+
+  if (import.meta.env.DEV) {
+    if (raw && !isLocalhostApiUrl(raw)) return raw;
+    return "/api";
+  }
+
+  if (raw && !isLocalhostApiUrl(raw)) return raw;
+
+  if (raw && isLocalhostApiUrl(raw)) {
+    console.warn(
+      "[api] VITE_API_URL targets localhost in a production build; using same-origin /api (set /api or your public API URL in the Docker build)."
+    );
+  }
+
+  return "/api";
 }
 
 const api = axios.create({
@@ -18,7 +40,16 @@ const api = axios.create({
 import { useWarehouseStore } from './store/warehouseStore';
 
 function isPublicAuthPath(url: string): boolean {
-  const p = url.replace(/^\//, '').split('?')[0];
+  if (!url) return false;
+  let path = url;
+  if (url.startsWith('http')) {
+    try {
+      path = new URL(url).pathname;
+    } catch {
+      /* ignore */
+    }
+  }
+  const p = path.replace(/^\//, '').split('?')[0];
   return p === 'auth/login' || p === 'auth/register';
 }
 
@@ -42,7 +73,10 @@ api.interceptors.request.use((config) => {
     '/history',
   ];
   const requestPath = config.url || '';
-  const isWarehouseAware = warehouseAwarePathPrefixes.some((prefix) => requestPath.startsWith(prefix));
+  const isWarehouseAware =
+    warehouseAwarePathPrefixes.some((prefix) => requestPath.startsWith(prefix)) &&
+    // Transfers move stock between warehouses; do not scope these calls to a single warehouse.
+    !requestPath.startsWith('/inventory/transfers');
 
   const warehouseId = useWarehouseStore.getState().currentWarehouseId;
   if (isWarehouseAware && warehouseId && warehouseId !== 'all') {
