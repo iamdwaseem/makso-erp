@@ -59,13 +59,12 @@ export async function authorizeWarehouseAccess(req: Request, res: Response, next
       }
     }
 
-    // Wrap the next part of the internal context with allowed warehouse IDs
-    return tenantStorage.run({ 
-        organizationId: organizationId,
-        allowedWarehouseIds: allowedIds 
-    }, () => {
-        next();
+    // Persist allowed warehouse scope for downstream handlers.
+    tenantStorage.enterWith({
+      organizationId: organizationId,
+      allowedWarehouseIds: allowedIds,
     });
+    return next();
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

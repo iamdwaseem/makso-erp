@@ -121,10 +121,10 @@ export async function resolveTenant(req: TenantRequest, res: Response, next: Nex
       slug: org.slug
     };
 
-    // Wrap the rest of the request lifecycle in the tenant storage context
-    return tenantStorage.run({ organizationId: org.id }, () => {
-      next();
-    });
+    // Persist tenant context for the remainder of this request.
+    // Using enterWith avoids losing AsyncLocalStorage context across Express middleware boundaries.
+    tenantStorage.enterWith({ organizationId: org.id, allowedWarehouseIds: [] });
+    return next();
   } catch (error: any) {
     console.error("Tenant resolution error:", error);
     res.status(500).json({ error: "Internal server error during tenant resolution" });
